@@ -1,0 +1,2702 @@
+
+<html>
+
+<head>
+    <title>Road Generator</title>
+    <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+    <script type="text/javascript" src="handlers/Mouse.js"></script>
+    <script type="text/javascript" src="handlers/OrbitCamera.js"></script>
+    <script type="text/javascript" src="handlers/FreeCamera.js"></script>
+    <script type="text/javascript" src="handlers/CameraHandler.js"></script>
+    <script type="text/javascript" src="handlers/ShaderHandler.js"></script>
+
+    <script type="text/javascript" src="objetos/AutosAnimados.js"></script>
+    <script type="text/javascript" src="objetos/ObjetosFactory.js"></script>
+
+    <script type="text/javascript" src="primitivas/FigurasPrimitivas.js"></script>
+    <script type="text/javascript" src="primitivas/CuadraticBSpline.js"></script>
+    <script type="text/javascript" src="primitivas/CuadraticBezier.js"></script>
+
+    <script type="text/javascript" src="Container3d/BufferCalculator.js"></script>
+    <script type="text/javascript" src="Container3d/Container3D.js"></script>
+    <script type="text/javascript" src="Container3d/Objeto3D.js"></script>
+
+    <script type="text/javascript" src="gl-matrix.js"></script>
+    <script type="text/javascript" src="webgl-utils.js"></script>
+
+    <script id="shader-fs-colored-obj" type="x-shader/x-fragment">
+    precision highp float;
+
+    uniform vec3 uAmbientColor;
+    uniform vec3 uDirectionalColor;
+
+    varying vec3 vVertexColor;
+    varying vec3 vLightWeighting;
+    varying vec3 vNormal;
+    varying vec3 vViewDir;
+    varying vec3 vLightDir;
+
+    uniform sampler2D uSampler;
+
+    void main(void) {
+
+        float shininess = 10.0;
+
+		// Attenuation constants
+		const float constantAtt = 1.0;
+		const float linearAtt = 0.0001;
+		const float quadraticAtt = 0.01;
+
+		vec3 normal = vNormal;
+		vec3 lightDir = normalize(vLightDir);
+        vec3 viewDir = vViewDir;
+
+        float lambertian = max(dot(lightDir, normal), 0.0);
+        float specular = 0.2;
+
+        if(lambertian > 0.0) {
+            vec3 reflectDir = reflect(-lightDir, normal);
+            float specAngle = max(dot(reflectDir, viewDir), 0.0);
+            specular = pow(specAngle, shininess);
+        }
+
+        vec3 lightIntensity =  uAmbientColor + lambertian*uDirectionalColor*10.0 + specular*uDirectionalColor ;
+
+        gl_FragColor = vec4(vVertexColor.rgb * lightIntensity, 1.0);
+    }
+</script>
+
+    <script id="shader-vs-colored-obj" type="x-shader/x-vertex">
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexNormal;
+    attribute vec3 aVertexColor;
+//    attribute vec3 aVertexTangent;
+
+    uniform mat4 uViewMatrix;
+    uniform mat4 uModelMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 uNMatrix;
+
+    uniform vec3 uLightPosition;
+
+    uniform bool uUseLighting;
+    uniform bool uUsingNormalMap;
+
+    varying vec3 vVertexColor;
+    varying vec3 vLightWeighting;
+    varying vec3 vNormal;
+    varying vec3 vViewDir;
+    varying vec3 vLightDir;
+
+    void main(void) {
+
+        // Transformamos al v�rtice al espacio de la c�mara
+        vec4 pos_camera_view = uViewMatrix * uModelMatrix * vec4(aVertexPosition, 1.0);
+        vec4 pos_view = uModelMatrix * vec4(aVertexPosition, 1.0);
+
+        // Transformamos al v�rtice al espacio de la proyecci�n
+        gl_Position = uPMatrix * pos_camera_view;
+
+        // Coordenada de textura sin modifiaciones
+        vVertexColor = aVertexColor;
+
+        vec3 pos = vec3(pos_view) / pos_view.w;
+        vNormal = normalize(uNMatrix * aVertexNormal);
+        vLightDir = uLightPosition - pos;
+        vViewDir = normalize(-pos);
+    }
+</script>
+
+    <script id="shader-fs-skySphere" type="x-shader/x-fragment">
+    precision highp float;
+
+    uniform vec3 uAmbientColor;
+
+    varying vec2 vTextureCoord;
+    varying float vID;
+
+    uniform sampler2D sky;
+
+    void main(void) {
+
+        vec4 textureColor;
+
+        vec2 auxUv = vTextureCoord;
+        //invierto la textura
+        auxUv.y = auxUv.y * -1.0;
+
+        textureColor = texture2D(sky, vec2(auxUv.s, auxUv.t));
+        gl_FragColor = vec4(textureColor.rgb * (uAmbientColor + 0.4), textureColor.a);
+    }
+</script>
+
+    <script id="shader-vs-skySphere" type="x-shader/x-vertex">
+    attribute vec3 aVertexPosition;
+    //attribute vec3 aVertexNormal;
+    attribute vec2 aTextureCoord;
+    attribute float aID;
+//    attribute vec3 aVertexTangent;
+
+    uniform mat4 uViewMatrix;
+    uniform mat4 uModelMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 uNMatrix;
+
+    varying vec2 vTextureCoord;
+    varying float vID;
+
+    void main(void) {
+
+		// Transformamos al v�rtice al espacio de la c�mara
+		vec4 pos_camera_view = uViewMatrix * uModelMatrix * vec4(aVertexPosition, 1.0);
+
+            // Transformamos al v�rtice al espacio de la proyecci�n
+        gl_Position = uPMatrix * pos_camera_view;
+
+            // Coordenada de textura sin modifiaciones
+        vTextureCoord = aTextureCoord;
+
+        //se pasa el id
+        vID = aID;
+    }
+</script>
+
+    <script id="vs-general" type="x-shader/x-vertex">
+
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexNormal;
+    attribute vec2 aTextureCoord;
+    attribute vec3 aVertexTangent;
+    attribute float aID;
+
+    uniform mat4 uViewMatrix;
+    uniform mat4 uModelMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 uNMatrix;
+
+    uniform float attID;
+
+    uniform vec3 uAmbientColor;
+    uniform vec3 uLightPosition;
+    uniform vec3 uDirectionalColor;
+
+    uniform vec3 uFarol1Position;
+    uniform vec3 uFarol2Position;
+    uniform vec3 uFarol3Position;
+    uniform vec3 uFarol4Position;
+    uniform vec3 uFarol5Position;
+    uniform vec3 uFarol6Position;
+    uniform vec3 uFarol7Position;
+    uniform vec3 uFarol8Position;
+    uniform vec3 uFarol9Position;
+    uniform vec3 uFarol10Position;
+    uniform vec3 uFarol11Position;
+
+    uniform bool uUseLighting;
+    uniform bool uUsingNormalMap;
+
+    varying vec2 vTextureCoord;
+    varying vec3 vLightWeighting;
+    varying float vID;
+    varying vec3 reflectDir;
+
+    varying vec3 vNormal;
+    varying vec3 vLightDir;
+    varying vec3 vViewDir;
+    varying vec3 vSpotLightDir1;
+    varying vec3 vSpotLight1;
+    varying vec3 vSpotLight2;
+    varying vec3 vSpotLight3;
+    varying vec3 vSpotLight4;
+    varying vec3 vSpotLight5;
+    varying vec3 vSpotLight6;
+    varying vec3 vSpotLight7;
+    varying vec3 vSpotLight8;
+    varying vec3 vSpotLight9;
+    varying vec3 vSpotLight10;
+    varying vec3 vSpotLight11;
+
+
+    void main(void) {
+
+		// Transformamos al v�rtice al espacio de la c�mara
+		vec4 pos_camera_view = uViewMatrix * uModelMatrix * vec4(aVertexPosition, 1.0);
+		vec4 pos_view = uModelMatrix * vec4(aVertexPosition, 1.0);
+
+		// Transformamos al v�rtice al espacio de la proyecci�n
+        gl_Position = uPMatrix * pos_camera_view;
+
+        //se pasa el id
+        vID = attID;
+
+		// Coordenada de textura sin modifiaciones
+        vTextureCoord = aTextureCoord;
+
+
+        vec3 pos = vec3(pos_view) / pos_view.w;
+        vNormal = normalize(uNMatrix * aVertexNormal);
+        vLightDir = uLightPosition - pos;
+        vViewDir = normalize(-pos);
+        vSpotLight1 = uFarol1Position - pos;
+        vSpotLight2 = uFarol2Position - pos;
+        vSpotLight3 = uFarol3Position - pos;
+        vSpotLight4 = uFarol4Position - pos;
+        vSpotLight5 = uFarol5Position - pos;
+        vSpotLight6 = uFarol6Position - pos;
+        vSpotLight7 = uFarol7Position - pos;
+        vSpotLight8 = uFarol8Position - pos;
+        vSpotLight9 = uFarol9Position - pos;
+        vSpotLight10 = uFarol10Position - pos;
+        vSpotLight11 = uFarol11Position - pos;
+        vSpotLightDir1 = vec3(0.0, -1.0, 0.0);
+
+        // Transform normal and tangent to eye space
+        vec3 norm = vNormal;
+        vec3 tang = normalize(uNMatrix * aVertexTangent);
+        vec3 binormal = normalize(cross(norm, tang));
+
+        if(vID >18.5 && vID <21.5) {
+            //por ahora solo la autopista y el concreto usan normales
+
+
+            // Matrix for transformation to tangent space
+            mat3 toObjectLocal = mat3(
+                tang.x, binormal.x, norm.x,
+                tang.y, binormal.y, norm.y,
+                tang.z, binormal.z, norm.z
+            );
+
+            // Transform vectors to tangent space
+            vLightDir = toObjectLocal * vLightDir;
+            vViewDir = toObjectLocal * vViewDir;
+            vSpotLightDir1 = toObjectLocal * vSpotLightDir1;
+            vSpotLight1 = toObjectLocal * vSpotLight1;
+            vSpotLight2 = toObjectLocal * vSpotLight2;
+            vSpotLight3 = toObjectLocal * vSpotLight3;
+            vSpotLight4 = toObjectLocal * vSpotLight4;
+            vSpotLight5 = toObjectLocal * vSpotLight5;
+            vSpotLight6 = toObjectLocal * vSpotLight6;
+            vSpotLight7 = toObjectLocal * vSpotLight7;
+            vSpotLight8 = toObjectLocal * vSpotLight8;
+            vSpotLight9 = toObjectLocal * vSpotLight9;
+            vSpotLight10 = toObjectLocal * vSpotLight10;
+            vSpotLight11 = toObjectLocal * vSpotLight11;
+
+        }
+    }
+
+    </script>
+
+    <script id="fs-street" type="x-shader/x-fragment">
+    precision highp float;
+
+    varying vec2 vTextureCoord;
+    varying vec3 vLightWeighting;
+
+    uniform sampler2D autopista;
+    uniform sampler2D concreto;
+    uniform sampler2D poste;
+    uniform sampler2D puerta;
+    uniform sampler2D rueda;
+    uniform sampler2D carroceria;
+    uniform sampler2D autopistaNormalMap;
+    uniform sampler2D concretoNormalMap;
+    //uniform sampler2D posteNormalMap;
+    //uniform sampler2D puertaNormalMap;
+    //uniform sampler2D ruedaNormalMap;
+    //uniform sampler2D carroceriaNormalMap;
+
+    // Variables utilizadas para la iluminación
+    uniform vec3 uAmbientColor;
+    uniform vec3 uDirectionalColor;
+
+	uniform float uShininess;
+
+    varying vec3 vNormal;
+    varying vec3 vLightDir;
+    varying vec3 vViewDir;
+    varying vec3 vSpotLightDir1;
+    varying vec3 vSpotLight1;
+    varying vec3 vSpotLight2;
+    varying vec3 vSpotLight3;
+    varying vec3 vSpotLight4;
+    varying vec3 vSpotLight5;
+    varying vec3 vSpotLight6;
+    varying vec3 vSpotLight7;
+    varying vec3 vSpotLight8;
+    varying vec3 vSpotLight9;
+    varying vec3 vSpotLight10;
+    varying vec3 vSpotLight11;
+
+    varying float vID;
+
+    void main(void) {
+        vec4 textureColor;
+
+        bool sinSpot = false;
+
+        //variables iluminacion
+        float shininess = 10.0;
+        const float spotlightCutOff = 0.7;//CAMBIAR A 0.2  // en radianes
+		const float spotLightExponent = 10.0;
+
+		// Attenuation constants
+		const float constantAtt = 4.0;
+		const float linearAtt = 0.0001;
+		const float quadraticAtt = 0.01;
+
+		vec3 normal = vNormal;
+		vec3 lightDir = normalize(vLightDir);
+        vec3 viewDir = vViewDir;
+
+        float specular = 1.0;
+
+        vec3 lightColor = vec3(0.9, 0.9, 0.7);
+
+        vec2 auxUv = vTextureCoord;
+
+        // Calculos spotlights
+	    vec3 vectorToLightSource = vSpotLight1;
+	    vec3 vectorToLightSource2 = vSpotLight2;
+	    vec3 vectorToLightSource3 = vSpotLight3;
+	    vec3 vectorToLightSource4 = vSpotLight4;
+	    vec3 vectorToLightSource5 = vSpotLight5;
+	    vec3 vectorToLightSource6 = vSpotLight6;
+	    vec3 vectorToLightSource7 = vSpotLight7;
+	    vec3 vectorToLightSource8 = vSpotLight8;
+	    vec3 vectorToLightSource9 = vSpotLight9;
+	    vec3 vectorToLightSource10 = vSpotLight10;
+	    vec3 vectorToLightSource11 = vSpotLight11;
+
+		vec3 spotLightIntensity = vec3(0.0,0.0,0.0);
+		vec3 spotLightIntensity2 = vec3(0.0,0.0,0.0);
+		vec3 spotLightIntensity3 = vec3(0.0,0.0,0.0);
+		vec3 spotLightIntensity4 = vec3(0.0,0.0,0.0);
+		vec3 spotLightIntensity5 = vec3(0.0,0.0,0.0);
+		vec3 spotLightIntensity6 = vec3(0.0,0.0,0.0);
+		vec3 spotLightIntensity7 = vec3(0.0,0.0,0.0);
+		vec3 spotLightIntensity8 = vec3(0.0,0.0,0.0);
+		vec3 spotLightIntensity9 = vec3(0.0,0.0,0.0);
+		vec3 spotLightIntensity10 = vec3(0.0,0.0,0.0);
+		vec3 spotLightIntensity11 = vec3(0.0,0.0,0.0);
+
+
+        if(vID >18.5 && vID <19.5){
+
+            auxUv.x = (auxUv.x * 5.0) - 0.48;
+            textureColor = texture2D(autopista, vec2(auxUv.s, auxUv.t));
+
+            // Extrae la normal desde el normalMap
+            normal = normalize(vec3(2.0 * texture2D(autopistaNormalMap, auxUv) - 1.0));
+
+        }
+
+
+        if(vID >20.5 && vID <21.5){
+            auxUv.y = auxUv.y*10.0;
+            textureColor = texture2D(concreto, vec2(auxUv.s, auxUv.t));
+            // Extrae la normal desde el normalMap
+            normal = normalize(vec3(2.0 * texture2D(concretoNormalMap, auxUv) - 1.0));
+        }
+
+        if(vID >21.5 && vID <22.5){
+            textureColor = texture2D(poste, vec2(auxUv.s, auxUv.t));
+            sinSpot = true;
+            specular = 2.0;
+
+            // Extrae la normal desde el normalMap
+            //normal = normalize(vec3(2.0 * texture2D(posteNormalMap, auxUv) - 1.0));
+        }
+
+        if(vID > 22.5 && vID < 23.5){
+            textureColor = texture2D(puerta, vec2(auxUv.s, auxUv.t));
+        }
+
+        if(vID > 249.5 && vID < 250.5){
+            textureColor = texture2D(rueda, vec2(auxUv.s, auxUv.t));
+        }
+
+        if(vID >= 25.5 && vID < 26.5){
+            textureColor = texture2D(carroceria, vec2(auxUv.s, auxUv.t));
+        }
+
+        if(vID >49.5 && vID <50.5){
+            textureColor = texture2D(poste, vec2(auxUv.s, auxUv.t));
+            sinSpot = false;
+            specular = 2.0;
+
+        }
+
+         if(vID >50.5 && vID <51.5){
+            textureColor = texture2D(poste, vec2(auxUv.s, auxUv.t));
+            sinSpot = false;
+            specular = 2.0;
+
+        }
+
+        //mat3 tbn = mat3(vvtangent, vvbinormal, vvnormal);
+        //normal = normalize(tbn * normal);
+
+        float lambertian = max(dot(lightDir, normal), 0.0);
+
+        if(lambertian > 0.0) {
+            vec3 reflectDir = reflect(-lightDir, normal);
+            float specAngle = max(dot(reflectDir, viewDir), 0.0);
+            specular = pow(specAngle, shininess);
+        }
+//
+        float diffuseLightWeighting = max(dot(normal, vectorToLightSource), 0.0);
+        float diffuseLightWeighting2 = max(dot(normal, vectorToLightSource2), 0.0);
+        float diffuseLightWeighting3 = max(dot(normal, vectorToLightSource3), 0.0);
+        float diffuseLightWeighting4 = max(dot(normal, vectorToLightSource4), 0.0);
+        float diffuseLightWeighting5 = max(dot(normal, vectorToLightSource5), 0.0);
+        float diffuseLightWeighting6 = max(dot(normal, vectorToLightSource6), 0.0);
+        float diffuseLightWeighting7 = max(dot(normal, vectorToLightSource7), 0.0);
+        float diffuseLightWeighting8 = max(dot(normal, vectorToLightSource8), 0.0);
+        float diffuseLightWeighting9 = max(dot(normal, vectorToLightSource9), 0.0);
+        float diffuseLightWeighting10 = max(dot(normal, vectorToLightSource10), 0.0);
+        float diffuseLightWeighting11 = max(dot(normal, vectorToLightSource11), 0.0);
+
+            if (diffuseLightWeighting > 0.0) {
+                // Calculate attenuation
+                float distance = length(vectorToLightSource);
+                float att = 1.0/(constantAtt+linearAtt * distance + quadraticAtt * distance * distance);
+                float spotEffect = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource));
+
+                if (spotEffect > spotlightCutOff) {
+                    spotEffect = pow(spotEffect, spotLightExponent);
+                    vec3 reflectionVector =	normalize(reflect(-vectorToLightSource,	normal));
+                    float rdotv = max(dot(reflectionVector, vViewDir), 0.0);
+                    float specularLightWeighting = pow(rdotv, shininess);
+                    spotLightIntensity = spotEffect * att * (lightColor *	diffuseLightWeighting + lightColor * specularLightWeighting);
+                }
+            }
+
+            if (diffuseLightWeighting2 > 0.0) {
+                // Calculate attenuation
+                float distance2 = length(vectorToLightSource2);
+                float att2 = 1.0/(constantAtt+linearAtt * distance2 + quadraticAtt * distance2 * distance2);
+                float spotEffect2 = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource2));
+
+                if (spotEffect2 > spotlightCutOff) {
+                    spotEffect2 = pow(spotEffect2, spotLightExponent);
+                    vec3 reflectionVector2 =	normalize(reflect(-vectorToLightSource2,	normal));
+                    float rdotv2 = max(dot(reflectionVector2, vViewDir), 0.0);
+                    float specularLightWeighting2 = pow(rdotv2, shininess);
+                    spotLightIntensity2 = spotEffect2 * att2 * (lightColor *	diffuseLightWeighting2 + lightColor * specularLightWeighting2);
+                }
+            }
+
+            if (diffuseLightWeighting3 > 0.0) {
+                // Calculate attenuation
+                float distance3 = length(vectorToLightSource3);
+                float att3 = 1.0/(constantAtt+linearAtt * distance3 + quadraticAtt * distance3 * distance3);
+                float spotEffect3 = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource3));
+
+                if (spotEffect3 > spotlightCutOff) {
+                    spotEffect3 = pow(spotEffect3, spotLightExponent);
+                    vec3 reflectionVector3 =	normalize(reflect(-vectorToLightSource3,	normal));
+                    float rdotv3 = max(dot(reflectionVector3, vViewDir), 0.0);
+                    float specularLightWeighting3 = pow(rdotv3, shininess);
+                    spotLightIntensity3 = spotEffect3 * att3 * (lightColor *	diffuseLightWeighting3 + lightColor * specularLightWeighting3);
+                }
+            }
+
+            if (diffuseLightWeighting4 > 0.0) {
+                // Calculate attenuation
+                float distance4 = length(vectorToLightSource4);
+                float att4 = 1.0/(constantAtt+linearAtt * distance4 + quadraticAtt * distance4 * distance4);
+                float spotEffect4 = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource4));
+
+                if (spotEffect4 > spotlightCutOff) {
+                    spotEffect4 = pow(spotEffect4, spotLightExponent);
+                    vec3 reflectionVector4 =	normalize(reflect(-vectorToLightSource4,	normal));
+                    float rdotv4 = max(dot(reflectionVector4, vViewDir), 0.0);
+                    float specularLightWeighting4 = pow(rdotv4, shininess);
+                    spotLightIntensity4 = spotEffect4 * att4 * (lightColor *	diffuseLightWeighting4 + lightColor * specularLightWeighting4);
+                }
+            }
+
+            if (diffuseLightWeighting5 > 0.0) {
+                // Calculate attenuation
+                float distance5 = length(vectorToLightSource5);
+                float att5 = 1.0/(constantAtt+linearAtt * distance5 + quadraticAtt * distance5 * distance5);
+                float spotEffect5 = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource5));
+
+                if (spotEffect5 > spotlightCutOff) {
+                    spotEffect5 = pow(spotEffect5, spotLightExponent);
+                    vec3 reflectionVector5 =	normalize(reflect(-vectorToLightSource5,	normal));
+                    float rdotv5 = max(dot(reflectionVector5, vViewDir), 0.0);
+                    float specularLightWeighting5 = pow(rdotv5, shininess);
+                    spotLightIntensity5 = spotEffect5 * att5 * (lightColor *	diffuseLightWeighting5 + lightColor * specularLightWeighting5);
+                }
+            }
+
+            if (diffuseLightWeighting6 > 0.0) {
+                // Calculate attenuation
+                float distance6 = length(vectorToLightSource6);
+                float att6 = 1.0/(constantAtt+linearAtt * distance6 + quadraticAtt * distance6 * distance6);
+                float spotEffect6 = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource6));
+
+                if (spotEffect6 > spotlightCutOff) {
+                    spotEffect6 = pow(spotEffect6, spotLightExponent);
+                    vec3 reflectionVector6 =	normalize(reflect(-vectorToLightSource6,	normal));
+                    float rdotv6 = max(dot(reflectionVector6, vViewDir), 0.0);
+                    float specularLightWeighting6 = pow(rdotv6, shininess);
+                    spotLightIntensity6 = spotEffect6 * att6 * (lightColor *	diffuseLightWeighting6 + lightColor * specularLightWeighting6);
+                }
+            }
+
+            if (diffuseLightWeighting7 > 0.0) {
+                // Calculate attenuation
+                float distance7 = length(vectorToLightSource7);
+                float att7 = 1.0/(constantAtt+linearAtt * distance7 + quadraticAtt * distance7 * distance7);
+                float spotEffect7 = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource7));
+
+                if (spotEffect7 > spotlightCutOff) {
+                    spotEffect7 = pow(spotEffect7, spotLightExponent);
+                    vec3 reflectionVector7 =	normalize(reflect(-vectorToLightSource7,	normal));
+                    float rdotv7 = max(dot(reflectionVector7, vViewDir), 0.0);
+                    float specularLightWeighting7 = pow(rdotv7, shininess);
+                    spotLightIntensity7 = spotEffect7 * att7 * (lightColor *	diffuseLightWeighting7 + lightColor * specularLightWeighting7);
+                }
+            }
+
+            if (diffuseLightWeighting8 > 0.0) {
+                // Calculate attenuation
+                float distance8 = length(vectorToLightSource8);
+                float att8 = 1.0/(constantAtt+linearAtt * distance8 + quadraticAtt * distance8 * distance8);
+                float spotEffect8 = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource8));
+
+                if (spotEffect8 > spotlightCutOff) {
+                    spotEffect8 = pow(spotEffect8, spotLightExponent);
+                    vec3 reflectionVector8 =	normalize(reflect(-vectorToLightSource8,	normal));
+                    float rdotv8 = max(dot(reflectionVector8, vViewDir), 0.0);
+                    float specularLightWeighting8 = pow(rdotv8, shininess);
+                    spotLightIntensity8 = spotEffect8 * att8 * (lightColor *	diffuseLightWeighting8 + lightColor * specularLightWeighting8);
+                }
+            }
+
+            if (diffuseLightWeighting9 > 0.0) {
+                // Calculate attenuation
+                float distance9 = length(vectorToLightSource9);
+                float att9 = 1.0/(constantAtt+linearAtt * distance9 + quadraticAtt * distance9 * distance9);
+                float spotEffect9 = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource9));
+
+                if (spotEffect9 > spotlightCutOff) {
+                    spotEffect9 = pow(spotEffect9, spotLightExponent);
+                    vec3 reflectionVector9 =	normalize(reflect(-vectorToLightSource9,	normal));
+                    float rdotv9 = max(dot(reflectionVector9, vViewDir), 0.0);
+                    float specularLightWeighting9 = pow(rdotv9, shininess);
+                    spotLightIntensity9 = spotEffect9 * att9 * (lightColor *	diffuseLightWeighting9 + lightColor * specularLightWeighting9);
+                }
+            }
+
+            if (diffuseLightWeighting10 > 0.0) {
+                // Calculate attenuation
+                float distance10 = length(vectorToLightSource10);
+                float att10 = 1.0/(constantAtt+linearAtt * distance10 + quadraticAtt * distance10 * distance10);
+                float spotEffect10 = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource10));
+
+                if (spotEffect10 > spotlightCutOff) {
+                    spotEffect10 = pow(spotEffect10, spotLightExponent);
+                    vec3 reflectionVector10 =	normalize(reflect(-vectorToLightSource10,	normal));
+                    float rdotv10 = max(dot(reflectionVector10, vViewDir), 0.0);
+                    float specularLightWeighting10 = pow(rdotv10, shininess);
+                    spotLightIntensity10 = spotEffect10 * att10 * (lightColor *	diffuseLightWeighting10 + lightColor * specularLightWeighting10);
+                }
+            }
+
+            if (diffuseLightWeighting11 > 0.0) {
+                // Calculate attenuation
+                float distance11 = length(vectorToLightSource11);
+                float att11 = 1.0/(constantAtt+linearAtt * distance11 + quadraticAtt * distance11 * distance11);
+                float spotEffect11 = dot(normalize(vSpotLightDir1), normalize(-vectorToLightSource11));
+
+                if (spotEffect11 > spotlightCutOff) {
+                    spotEffect11 = pow(spotEffect11, spotLightExponent);
+                    vec3 reflectionVector11 =	normalize(reflect(-vectorToLightSource11,	normal));
+                    float rdotv11 = max(dot(reflectionVector11, vViewDir), 0.0);
+                    float specularLightWeighting11 = pow(rdotv11, shininess);
+                    spotLightIntensity11 = spotEffect11 * att11 * (lightColor *	diffuseLightWeighting11 + lightColor * specularLightWeighting11);
+                }
+            }
+
+        vec3 lightIntensity =  uAmbientColor + spotLightIntensity + spotLightIntensity2 + spotLightIntensity3 + spotLightIntensity4 + spotLightIntensity5 + spotLightIntensity6 + spotLightIntensity7 + spotLightIntensity8 + spotLightIntensity9 + spotLightIntensity10 + spotLightIntensity11 + lambertian*uDirectionalColor*20.0 + (specular)*uDirectionalColor ;
+
+        if(sinSpot){
+            lightIntensity =  uAmbientColor + lambertian*uDirectionalColor*15.0 + (specular)*uDirectionalColor ;
+        }
+
+        //vec4 lightMapColor = vec4(1.0,1.0,1.0,1.0);
+        //vec4 reflectionColor = vec4(0.0,0.0,0.0,1.0);
+
+        //vec4 mixedColor = textureColor * lightMapColor + reflectionColor;
+
+        gl_FragColor = vec4(textureColor.rgb * lightIntensity, textureColor.a);
+    }
+    </script>
+
+    <script id="fs-buildingTop" type="x-shader/x-fragment">
+    precision highp float;
+
+    varying vec2 vTextureCoord;
+    varying vec3 vLightWeighting;
+
+    uniform float t;
+    uniform float count;
+
+    // Variables utilizadas para la iluminación
+    uniform vec3 uAmbientColor;
+    uniform vec3 uDirectionalColor;
+
+	uniform float uShininess;
+
+    varying vec3 vNormal;
+    varying vec3 vLightDir;
+    varying vec3 vViewDir;
+
+    //TOMAMOS ID'S CRECIENTES COMENZANDO POR 0.0
+
+    //uniform sampler2D building1;
+    uniform sampler2D building2;
+    uniform sampler2D building3;
+    uniform sampler2D building4;
+    uniform sampler2D building5;
+    uniform sampler2D building6;
+    uniform sampler2D building7;
+    uniform sampler2D building8;
+    uniform sampler2D building9;
+    //uniform sampler2D building10;
+    uniform sampler2D building11;
+    uniform sampler2D building12;
+    uniform sampler2D pb1;
+    uniform sampler2D pb2;
+    uniform sampler2D pb3;
+    uniform sampler2D pb4;
+
+    varying float vID;
+    varying float maxY;
+
+    void main(void) {
+        vec4 textureColor;
+        vec4 textureColor2;
+        float factor;
+
+        // Coordenada de textura sin modifiaciones
+        vec4 color = vec4(1.0,0.0,0.0, 1.0);
+        vec2 auxUv = vTextureCoord;
+        vec2 auxUv2 = vTextureCoord;
+
+        //ajusto la altura de la entrada a partir de la del edificio
+        factor = 2.8/maxY;
+        float factorX = 4.0;
+        float factorpbY = maxY / 2.8;
+        float factoredY = 5.0;
+
+        //variables iluminacion
+        float shininess = 1.0;
+
+		// Attenuation constants
+		const float constantAtt = 1.0;
+		const float linearAtt = 0.0001;
+		const float quadraticAtt = 0.01;
+
+		vec3 normal = vNormal;
+		vec3 lightDir = normalize(vLightDir);
+        vec3 viewDir = vViewDir;
+
+        float lambertian = max(dot(lightDir, normal), 0.0);
+        float specular = 10.0;
+
+        if(lambertian > 0.0) {
+            vec3 reflectDir = reflect(-lightDir, normal);
+            float specAngle = max(dot(reflectDir, viewDir), 0.0);
+            specular = pow(specAngle, shininess);
+        }
+
+
+        /*if(maxY>= 15.1 && maxY<16.1){
+            auxUv2.x = auxUv2.x * factorX;
+            auxUv2.y = auxUv2.y * factoredY;
+            auxUv.x = auxUv.x * factorX;
+            auxUv.y = auxUv.y * factorpbY;
+
+            if(vID >= 1.5 && vID < 5.5){
+                textureColor = texture2D(building2, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb2, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 5.5 && vID < 9.5){
+                textureColor = texture2D(building3, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb3, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 9.5 && vID < 13.5){
+                textureColor = texture2D(building5, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+        }
+
+         else{
+            auxUv2.x = auxUv2.x * factorX;
+            auxUv2.y = auxUv2.y * factoredY;
+            auxUv.x = auxUv.x * factorX;
+            auxUv.y = auxUv.y * factorpbY;
+
+            if(vID >= 1.5 && vID < 5.5){
+                textureColor = texture2D(building1, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 5.5 && vID < 9.5){
+                textureColor = texture2D(building8, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb4, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 9.5 && vID < 13.5){
+                textureColor = texture2D(building9, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb4, vec2(auxUv.s, auxUv.t));
+            }
+        }*/
+
+
+         if(maxY>= 14.0 && maxY<15.8){
+            auxUv2.x = auxUv2.x * factorX;
+            auxUv2.y = auxUv2.y * factoredY;
+            auxUv.x = auxUv.x * factorX;
+            auxUv.y = auxUv.y * factorpbY;
+
+            if(vID >= 1.5 && vID < 3.5){
+                textureColor = texture2D(building3, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb3, vec2(auxUv.s, auxUv.t));
+            }
+
+            if( vID >= 3.5 && vID < 4.5){
+                textureColor = texture2D(building5, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb2, vec2(auxUv.s, auxUv.t));
+            }
+
+            if( vID >= 4.5 && vID < 5.5){
+                textureColor = texture2D(building2, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 5.5 && vID < 6.5){
+                textureColor = texture2D(building3, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb4, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 6.5 && vID < 8.5 ){
+                textureColor = texture2D(building5, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+
+            if( vID >= 8.5 && vID < 11.5 ){
+                textureColor = texture2D(building2, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb2, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 11.5 && vID < 12.5){
+                textureColor = texture2D(building3, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb3, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 12.5 && vID < 13.5){
+                textureColor = texture2D(building5, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb4, vec2(auxUv.s, auxUv.t));
+            }
+        }
+
+        else if(maxY>= 15.8 && maxY<16.2){
+                auxUv2.x = auxUv2.x * factorX;
+                auxUv2.y = auxUv2.y * factoredY;
+                auxUv.x = auxUv.x * factorX;
+                auxUv.y = auxUv.y * factorpbY;
+
+             if(vID >= 1.5 && vID < 3.5){
+
+                textureColor = texture2D(building6, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 3.5 && vID < 5.5){
+
+                textureColor = texture2D(building12, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb2, vec2(auxUv.s, auxUv.t));
+            }
+
+             if(vID >= 5.5 && vID < 6.5){
+
+                textureColor = texture2D(building6, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb3, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 6.5 && vID < 7.5){
+
+                textureColor = texture2D(building12, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb4, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 7.5 && vID < 9.5){
+
+                textureColor = texture2D(building6, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 9.5 && vID < 12.5){
+
+                textureColor = texture2D(building12, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb2, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 12.5 && vID < 13.5){
+
+                textureColor = texture2D(building6, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb3, vec2(auxUv.s, auxUv.t));
+            }
+        }
+
+         else if(maxY>= 16.2 && maxY<19.1){
+            auxUv2.x = auxUv2.x * factorX;
+            auxUv2.y = auxUv2.y * factoredY;
+            auxUv.x = auxUv.x * factorX;
+            auxUv.y = auxUv.y * factorpbY;
+
+            if(vID >= 1.5 && vID < 3.5){
+                textureColor = texture2D(building9, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb4, vec2(auxUv.s, auxUv.t));
+            }
+
+            if( vID >= 3.5 && vID < 4.5){
+                textureColor = texture2D(building8, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+
+            if( vID >= 4.5 && vID < 5.5){
+                textureColor = texture2D(building9, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb2, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 5.5 && vID < 6.5){
+                textureColor = texture2D(building8, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb3, vec2(auxUv.s, auxUv.t));
+            }
+
+            if( vID >= 6.5 && vID < 8.5){
+                textureColor = texture2D(building8, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb4, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 8.5 && vID < 11.5 ){
+                textureColor = texture2D(building9, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 11.5 && vID < 12.5){
+                textureColor = texture2D(building8, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb2, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(  vID >= 12.5 && vID < 13.5){
+                textureColor = texture2D(building9, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb3, vec2(auxUv.s, auxUv.t));
+            }
+
+        }
+
+        else if(maxY>= 19.1 && maxY<23.1){
+            auxUv2.x = auxUv2.x * factorX;
+            auxUv2.y = auxUv2.y * factoredY;
+            auxUv.x = auxUv.x * factorX;
+            auxUv.y = auxUv.y * factorpbY;
+
+            if(vID >= 1.5 && vID < 3.5){
+                textureColor = texture2D(building4, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb4, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 3.5 && vID < 5.5){
+                textureColor = texture2D(building7, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 5.5 && vID < 6.5){
+                textureColor = texture2D(building4, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb2, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 6.5 && vID < 7.5){
+                textureColor = texture2D(building7, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb3, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 7.5 && vID < 9.5){
+                textureColor = texture2D(building4, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb4, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 9.5 && vID < 12.5){
+                textureColor = texture2D(building7, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+
+            if(vID >= 12.5 && vID < 13.5){
+                textureColor = texture2D(building4, vec2(auxUv2.s, auxUv2.t));
+                textureColor2 = texture2D(pb1, vec2(auxUv.s, auxUv.t));
+            }
+        }
+
+//        else{
+//
+//            auxUv2.x = auxUv2.x * factorX;
+//            auxUv2.y = auxUv2.y * factoredY;
+//            auxUv.x = auxUv.x * factorX;
+//            auxUv.y = auxUv.y * factorpbY;
+//
+//            textureColor = texture2D(building11, vec2(auxUv2.s, auxUv2.t));
+//            textureColor2 = texture2D(pb4, vec2(auxUv.s, auxUv.t));
+//
+//
+//        }
+
+
+
+        if((vTextureCoord.y) < factor){
+
+            color.x=textureColor2.x;
+            color.y=textureColor2.y;
+            color.z=textureColor2.z;
+        }
+        else{
+            color.x=textureColor.x;
+            color.y=textureColor.y;
+            color.z=textureColor.z;
+        }
+
+        textureColor = color;
+
+        vec3 lightIntensity =  uAmbientColor + lambertian*uDirectionalColor*2.0 + specular*uDirectionalColor ;
+        //vec4 lightMapColor = vec4(1.0,1.0,1.0,1.0);
+        //vec4 reflectionColor = vec4(0.0,0.0,0.0,1.0);
+
+        //vec4 mixedColor = textureColor * lightMapColor + reflectionColor;
+
+        gl_FragColor = vec4(textureColor.rgb * lightIntensity, textureColor.a);
+    }
+    </script>
+
+    <script id="vs-buildingTop" type="x-shader/x-vertex">
+
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexNormal;
+    attribute vec2 aTextureCoord;
+    //attribute vec3 aVertexTangent;
+
+    uniform float aID;
+    uniform mat4 uViewMatrix;
+    uniform mat4 uModelMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 uNMatrix;
+
+    uniform vec3 uAmbientColor;
+    uniform vec3 uLightPosition;
+    uniform vec3 uDirectionalColor;
+
+    uniform bool uUsingNormalMap;
+    uniform bool uUseLighting;
+
+    varying vec2 vTextureCoord;
+    varying vec3 vLightWeighting;
+    varying float vID;
+    varying float maxY;
+
+    uniform float t;
+    uniform float edificioActual;
+    uniform float count;
+    uniform float amaxY;
+
+    varying vec3 vNormal;
+    varying vec3 vLightDir;
+    varying vec3 vViewDir;
+
+    void main(void) {
+
+        // position
+        vec4 auxPos = vec4(aVertexPosition,1.0);
+        float factor = t -(aID * 10.0);
+
+        if(factor < 0.0){
+            factor = 0.0;
+        }
+
+        float escalaY=min(1.0,factor*0.05);
+
+        auxPos.y=auxPos.y*escalaY;
+
+        // Transformamos al v�rtice al espacio de la c�mara
+		vec4 pos_camera_view = uViewMatrix * uModelMatrix * auxPos;
+		vec4 pos_view = uModelMatrix * vec4(aVertexPosition, 1.0);
+
+		// Transformamos al v�rtice al espacio de la proyecci�n
+        gl_Position = uPMatrix * pos_camera_view;
+
+        //se pasa el id y la altura y ancho maxima
+        vID = count;
+        maxY = amaxY;
+
+        vTextureCoord = aTextureCoord;
+
+        // uv
+        vec2 auxUv=vTextureCoord;
+        auxUv.y = auxUv.y*escalaY;
+
+        vTextureCoord = auxUv;
+
+        vec3 pos = vec3(pos_view) / pos_view.w;
+        vNormal = normalize(uNMatrix * aVertexNormal);
+        vLightDir = uLightPosition - pos;
+        vViewDir = normalize(-pos);
+
+    }
+
+    </script>
+
+    <script id="vs-city" type="x-shader/x-vertex">
+
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexNormal;
+    attribute vec2 aTextureCoord;
+    attribute vec3 aVertexTangent;
+    attribute float aID;
+
+    uniform mat4 uViewMatrix;
+    uniform mat4 uModelMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 uNMatrix;
+
+    uniform vec3 uAmbientColor;
+    uniform vec3 uLightPosition;
+    uniform vec3 uDirectionalColor;
+
+    uniform float atID;
+
+    varying vec2 vTextureCoord;
+    varying vec3 vLightWeighting;
+    varying float vID;
+
+    varying vec3 vNormal;
+    varying vec3 vLightDir;
+    varying vec3 vViewDir;
+
+    varying vec3 reflectDirec;
+
+    void main(void) {
+
+		// Transformamos al v�rtice al espacio de la c�mara
+		vec4 pos_camera_view = uViewMatrix * uModelMatrix * vec4(aVertexPosition, 1.0);
+		vec4 pos_view = uModelMatrix * vec4(aVertexPosition, 1.0);
+
+		// Transformamos al v�rtice al espacio de la proyecci�n
+        gl_Position = uPMatrix * pos_camera_view;
+
+        //se pasa el id
+        vID = atID;
+
+		// Coordenada de textura sin modifiaciones
+        vTextureCoord = aTextureCoord;
+
+        vec3 pos = vec3(pos_view) / pos_view.w;
+        vNormal = normalize(uNMatrix * aVertexNormal);
+        vLightDir = uLightPosition - pos;
+        vViewDir = normalize(-pos);
+
+        //if(vID < 19.5 && vID > 31.5){
+        //Transform normal and tangent to eye space
+            vec3 norm = vNormal;
+            vec3 tang = normalize(uNMatrix * aVertexTangent);
+            vec3 binormal = normalize(cross(norm, tang));
+
+            //todo en este shader tiene mapa de normales
+
+            // Matrix for transformation to tangent space
+            mat3 toObjectLocal = mat3(
+                tang.x, binormal.x, norm.x,
+                tang.y, binormal.y, norm.y,
+                tang.z, binormal.z, norm.z
+            );
+
+            // Transform vectors to tangent space
+            vLightDir = toObjectLocal * vLightDir;
+            vViewDir = toObjectLocal * vViewDir;
+        //}
+
+        vec3 view = normalize(vec3(pos_camera_view));
+        reflectDirec = reflect(view, vNormal);
+    	reflectDirec = vec3(uViewMatrix * vec4(reflectDirec, 0.0));
+
+    }
+    </script>
+
+    <script id="fs-city" type="x-shader/x-fragment">
+    precision highp float;
+
+    varying vec2 vTextureCoord;
+    varying vec3 vLightWeighting;
+
+    uniform sampler2D street;
+    uniform sampler2D esquina;
+    uniform sampler2D vereda;
+    uniform sampler2D pasto;
+    uniform sampler2D skyy;
+    uniform sampler2D plata;
+    //uniform sampler2D pastoNormalMap;
+    uniform sampler2D veredaNormalMap;
+    uniform sampler2D esquinaNormalMap;
+    uniform sampler2D streetNormalMap;
+
+
+    // Variables utilizadas para la iluminación
+    uniform vec3 uAmbientColor;
+    uniform vec3 uDirectionalColor;
+
+	uniform float uShininess;
+
+    varying vec3 vNormal;
+    varying vec3 vLightDir;
+    varying vec3 vViewDir;
+    varying float vID;
+
+    varying vec3 reflectDirec;
+
+    void main(void) {
+        vec4 textureColor;
+
+        //variables iluminacion
+        float shininess = 100.0;
+
+		// Attenuation constants
+		const float constantAtt = 1.0;
+		const float linearAtt = 0.0001;
+		const float quadraticAtt = 0.01;
+
+		float mult = 20.0;
+
+		vec3 normal = vNormal;
+		vec3 lightDir = normalize(vLightDir);
+        vec3 viewDir = vViewDir;
+
+        vec2 auxUv = vTextureCoord;
+
+        float specular = 2.0;
+
+        if(vID >= 299.5 && vID < 300.5){
+           textureColor = texture2D(street, vec2(vTextureCoord.s, vTextureCoord.t));
+           normal = normalize(vec3(2.0 * texture2D(streetNormalMap, vTextureCoord) - 1.0));
+           specular = 1.0;
+           mult = 40.0;
+        }
+
+        if(vID >= 0.5 && vID < 1.5){
+           textureColor = texture2D(esquina, vec2(vTextureCoord.s, vTextureCoord.t));
+           normal = normalize(vec3(2.0 * texture2D(esquinaNormalMap, vTextureCoord) - 1.0));
+        }
+
+        if(vID >= 17.5 && vID < 18.5){
+            auxUv.x = auxUv.x * 7.0;
+            auxUv.y = auxUv.y * 7.0;
+            textureColor = texture2D(vereda, vec2(auxUv.s, auxUv.t));
+            specular = 1.0;
+            mult = 20.0;
+            normal = normalize(vec3(2.0 * texture2D(veredaNormalMap, auxUv) - 1.0));
+        }
+
+        if(vID >= 19.5 && vID < 20.5){
+            textureColor = texture2D(pasto, vec2(vTextureCoord.s, vTextureCoord.t));
+            mult = 10.0;
+            //normal = normalize(vec3(2.0 * texture2D(pastoNormalMap, vTextureCoord) - 1.0));
+        }
+
+        if(vID >= 30.5 && vID < 31.5){
+            auxUv.x = auxUv.x * 18.0;
+            auxUv.y = auxUv.y * 20.0;
+            textureColor = texture2D(pasto, vec2(auxUv.s, auxUv.t));
+            mult = 10.0;
+            //normal = normalize(vec3(2.0 * texture2D(pastoNormalMap, auxUv) - 1.0));
+        }
+
+        vec4 reflectionColor = vec4(0.0,0.0,0.0,1.0);
+
+        float lambertian = max(dot(lightDir, normal), 0.0);
+
+        if(lambertian > 0.0) {
+            vec3 reflectDir = reflect(-lightDir, normal);
+            float specAngle = max(dot(reflectDir, viewDir), 0.0);
+            specular = pow(specAngle, shininess);
+        }
+
+        if(vID >= 39.5 && vID < 40.5){
+            auxUv.x = auxUv.x * -1.0;
+            //auxUv.y = auxUv.y * 20.0;
+            textureColor = texture2D(plata, auxUv);
+            specular = 0.6;
+            mult = 5.0;
+            float reflectionFactor = 0.5;
+            vec2 reflectDir2D = vec2(reflectDirec.x * 1.0,reflectDirec.y * 1.0 );
+			vec4 enviromentColor = texture2D(skyy, reflectDir2D );
+            reflectionColor = enviromentColor * reflectionFactor;
+        }
+
+        vec3 lightIntensity =  uAmbientColor + lambertian*uDirectionalColor*mult + specular*uDirectionalColor ;
+
+        vec4 mixedColor = textureColor + reflectionColor;
+
+        gl_FragColor = vec4(mixedColor.rgb * lightIntensity, mixedColor.a);
+
+    }
+    </script>
+
+    <script type="text/javascript">
+
+        var gl;
+        var farolesPos = [];
+        var glTextures = {};
+
+        function initGL(canvas) {
+            try {
+                gl = canvas.getContext("experimental-webgl");
+                gl.viewportWidth = canvas.width;
+                gl.viewportHeight = canvas.height;
+            } catch (e) {
+            }
+            if (!gl) {
+                alert("Could not initialise WebGL, sorry :-(");
+            }
+        }
+
+
+        function getShader(id) {
+            var shaderScript = document.getElementById(id);
+            if (!shaderScript) {
+                return null;
+            }
+
+            var str = "";
+            var k = shaderScript.firstChild;
+            while (k) {
+                if (k.nodeType == 3) {
+                    str += k.textContent;
+                }
+                k = k.nextSibling;
+            }
+
+            var shader;
+            if (shaderScript.type == "x-shader/x-fragment") {
+                shader = gl.createShader(gl.FRAGMENT_SHADER);
+            } else if (shaderScript.type == "x-shader/x-vertex") {
+                shader = gl.createShader(gl.VERTEX_SHADER);
+            } else {
+                return null;
+            }
+
+            gl.shaderSource(shader, str);
+            gl.compileShader(shader);
+
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                alert(gl.getShaderInfoLog(shader));
+                return null;
+            }
+
+            return shader;
+        }
+
+        var shaderProgramColoredObject;
+        var streetShader;
+        var buildingShaders;
+        var cityShader;
+
+        function initBuildingTopShaders() {
+
+            //Inicializamos el shader de la calle.
+
+            /*REVISAR ESTO, CAPAS NO HAY QUE PASARLE DIRECCIONES*/
+
+            var fragmentShader = getShader("fs-buildingTop");
+            var vertexShader = getShader("vs-buildingTop");
+
+            buildingShaders = gl.createProgram();
+            gl.attachShader(buildingShaders, vertexShader);
+            gl.attachShader(buildingShaders, fragmentShader);
+            gl.linkProgram(buildingShaders);
+
+            if (!gl.getProgramParameter(buildingShaders, gl.LINK_STATUS)) {
+                alert("Could not initialise shaders");
+            }
+            gl.useProgram(buildingShaders);
+
+            buildingShaders.vertexPositionAttribute = gl.getAttribLocation(buildingShaders, "aVertexPosition");
+            gl.enableVertexAttribArray(buildingShaders.vertexPositionAttribute);
+
+            buildingShaders.vertexNormalAttribute = gl.getAttribLocation(buildingShaders, "aVertexNormal");
+            gl.enableVertexAttribArray(buildingShaders.vertexNormalAttribute);
+
+            buildingShaders.textureCoordAttribute = gl.getAttribLocation(buildingShaders, "aTextureCoord");
+            gl.enableVertexAttribArray(buildingShaders.textureCoordAttribute);
+
+//            buildingShaders.vertexTangentAttribute = gl.getAttribLocation(buildingShaders, "aVertexTangent");
+//            gl.enableVertexAttribArray(buildingShaders.vertexTangentAttribute);
+
+            buildingShaders.pMatrixUniform = gl.getUniformLocation(buildingShaders, "uPMatrix");
+            buildingShaders.ViewMatrixUniform = gl.getUniformLocation(buildingShaders, "uViewMatrix");
+            buildingShaders.ModelMatrixUniform = gl.getUniformLocation(buildingShaders, "uModelMatrix");
+            buildingShaders.nMatrixUniform = gl.getUniformLocation(buildingShaders, "uNMatrix");
+            buildingShaders.useLightingUniform = gl.getUniformLocation(buildingShaders, "uUseLighting");
+            buildingShaders.ambientColorUniform = gl.getUniformLocation(buildingShaders, "uAmbientColor");
+            buildingShaders.lightingDirectionUniform = gl.getUniformLocation(buildingShaders, "uLightPosition");
+            buildingShaders.directionalColorUniform = gl.getUniformLocation(buildingShaders, "uDirectionalColor");
+            buildingShaders.shininess = gl.getUniformLocation(buildingShaders, "uShininess");
+            buildingShaders.usingNormalMap = gl.getUniformLocation(buildingShaders, "uUsingNormalMap");
+
+            //idBuilding = gl.getAttribLocation(buildingShaders, "aID");
+
+        }
+
+        function initCityShaders() {
+
+            var fragmentShader = getShader("fs-city");
+            var vertexShader = getShader("vs-city");
+
+            cityShader = gl.createProgram();
+            gl.attachShader(cityShader, fragmentShader);
+            gl.attachShader(cityShader, vertexShader);
+            gl.linkProgram(cityShader);
+
+            if (!gl.getProgramParameter(cityShader, gl.LINK_STATUS)) {
+                alert("Could not initialise shaders");
+            }
+            gl.useProgram(cityShader);
+
+            cityShader.vertexPositionAttribute = gl.getAttribLocation(cityShader, "aVertexPosition");
+            gl.enableVertexAttribArray(cityShader.vertexPositionAttribute);
+
+            cityShader.vertexNormalAttribute = gl.getAttribLocation(cityShader, "aVertexNormal");
+            gl.enableVertexAttribArray(cityShader.vertexNormalAttribute);
+
+            cityShader.textureCoordAttribute = gl.getAttribLocation(cityShader, "aTextureCoord");
+            gl.enableVertexAttribArray(cityShader.textureCoordAttribute);
+
+            cityShader.vertexTangentAttribute = gl.getAttribLocation(cityShader, "aVertexTangent");
+            gl.enableVertexAttribArray(cityShader.vertexTangentAttribute);
+
+            cityShader.pMatrixUniform = gl.getUniformLocation(cityShader, "uPMatrix");
+            cityShader.ViewMatrixUniform = gl.getUniformLocation(cityShader, "uViewMatrix");
+            cityShader.ModelMatrixUniform = gl.getUniformLocation(cityShader, "uModelMatrix");
+            cityShader.nMatrixUniform = gl.getUniformLocation(cityShader, "uNMatrix");
+            //cityShader.useLightingUniform = gl.getUniformLocation(cityShader, "uUseLighting");
+            cityShader.ambientColorUniform = gl.getUniformLocation(cityShader, "uAmbientColor");
+            cityShader.lightingDirectionUniform = gl.getUniformLocation(cityShader, "uLightPosition");
+            cityShader.directionalColorUniform = gl.getUniformLocation(cityShader, "uDirectionalColor");
+            cityShader.shininess = gl.getUniformLocation(cityShader, "uShininess");
+            //cityShader.usingNormalMap = gl.getUniformLocation(cityShader, "uUsingNormalMap");
+
+            idCity = gl.getAttribLocation(cityShader, "atID");
+
+        }
+
+        function initStreetShaders() {
+            //Inicializamos el shader de la calle.
+
+            /*REVISAR ESTO, CAPAS NO HAY QUE PASARLE DIRECCIONES*/
+
+            var fragmentShader = getShader("fs-street");
+            var vertexShader = getShader("vs-general");
+
+            streetShader = gl.createProgram();
+            gl.attachShader(streetShader, vertexShader);
+            gl.attachShader(streetShader, fragmentShader);
+            gl.linkProgram(streetShader);
+
+            if (!gl.getProgramParameter(streetShader, gl.LINK_STATUS)) {
+                alert("Could not initialise shaders");
+            }
+            gl.useProgram(streetShader);
+
+            streetShader.vertexPositionAttribute = gl.getAttribLocation(streetShader, "aVertexPosition");
+            gl.enableVertexAttribArray(streetShader.vertexPositionAttribute);
+
+            streetShader.vertexNormalAttribute = gl.getAttribLocation(streetShader, "aVertexNormal");
+            gl.enableVertexAttribArray(streetShader.vertexNormalAttribute);
+
+            streetShader.textureCoordAttribute = gl.getAttribLocation(streetShader, "aTextureCoord");
+            gl.enableVertexAttribArray(streetShader.textureCoordAttribute);
+
+            streetShader.vertexTangentAttribute = gl.getAttribLocation(streetShader, "aVertexTangent");
+            gl.enableVertexAttribArray(streetShader.vertexTangentAttribute);
+
+            streetShader.pMatrixUniform = gl.getUniformLocation(streetShader, "uPMatrix");
+            streetShader.ViewMatrixUniform = gl.getUniformLocation(streetShader, "uViewMatrix");
+            streetShader.ModelMatrixUniform = gl.getUniformLocation(streetShader, "uModelMatrix");
+            streetShader.nMatrixUniform = gl.getUniformLocation(streetShader, "uNMatrix");
+            streetShader.useLightingUniform = gl.getUniformLocation(streetShader, "uUseLighting");
+            streetShader.useLightingPuntual = gl.getUniformLocation(streetShader, "uUseLightingPuntual");
+            streetShader.ambientColorUniform = gl.getUniformLocation(streetShader, "uAmbientColor");
+            streetShader.lightingDirectionUniform = gl.getUniformLocation(streetShader, "uLightPosition");
+            streetShader.directionalColorUniform = gl.getUniformLocation(streetShader, "uDirectionalColor");
+
+            idStreet = gl.getAttribLocation(streetShader, "aID");
+
+            farolesPos.push("uFarol1Position");
+            farolesPos.push("uFarol2Position");
+            farolesPos.push("uFarol3Position");
+            farolesPos.push("uFarol4Position");
+            farolesPos.push("uFarol5Position");
+            farolesPos.push("uFarol6Position");
+            farolesPos.push("uFarol7Position");
+            farolesPos.push("uFarol8Position");
+            farolesPos.push("uFarol9Position");
+            farolesPos.push("uFarol10Position");
+            farolesPos.push("uFarol11Position");
+
+
+        }
+
+        function initColoredShaders() {
+
+            /////////////////////////////////////////////
+            /////////////////////////////////////////////
+            //
+            // Inicializamos todo lo relacionado con el program shader para
+            // renderizar objetos Coloreados
+
+            var fragmentShaderColoredObj = getShader("shader-fs-colored-obj");
+            var vertexShaderColoredObj = getShader("shader-vs-colored-obj");
+
+            shaderProgramColoredObject = gl.createProgram();
+            gl.attachShader(shaderProgramColoredObject, vertexShaderColoredObj);
+            gl.attachShader(shaderProgramColoredObject, fragmentShaderColoredObj);
+            gl.linkProgram(shaderProgramColoredObject);
+
+            if (!gl.getProgramParameter(shaderProgramColoredObject, gl.LINK_STATUS)) {
+                alert("Could not initialise shaders");
+            }
+
+            gl.useProgram(shaderProgramColoredObject);
+
+            shaderProgramColoredObject.vertexPositionAttribute = gl.getAttribLocation(shaderProgramColoredObject, "aVertexPosition");
+            gl.enableVertexAttribArray(shaderProgramColoredObject.vertexPositionAttribute);
+
+            shaderProgramColoredObject.vertexColorAttribute = gl.getAttribLocation(shaderProgramColoredObject, "aVertexColor");
+            gl.enableVertexAttribArray(shaderProgramColoredObject.vertexColorAttribute);
+
+            shaderProgramColoredObject.vertexNormalAttribute = gl.getAttribLocation(shaderProgramColoredObject, "aVertexNormal");
+            gl.enableVertexAttribArray(shaderProgramColoredObject.vertexNormalAttribute);
+
+//            shaderProgramColoredObject.vertexTangentAttribute = gl.getAttribLocation(shaderProgramColoredObject, "aVertexTangent");
+//            gl.enableVertexAttribArray(shaderProgramColoredObject.vertexTangentAttribute);
+
+            shaderProgramColoredObject.pMatrixUniform = gl.getUniformLocation(shaderProgramColoredObject, "uPMatrix");
+            shaderProgramColoredObject.ViewMatrixUniform = gl.getUniformLocation(shaderProgramColoredObject, "uViewMatrix");
+            shaderProgramColoredObject.ModelMatrixUniform = gl.getUniformLocation(shaderProgramColoredObject, "uModelMatrix");
+            shaderProgramColoredObject.nMatrixUniform = gl.getUniformLocation(shaderProgramColoredObject, "uNMatrix");
+            shaderProgramColoredObject.samplerUniform = gl.getUniformLocation(shaderProgramColoredObject, "uSampler");
+            shaderProgramColoredObject.useLightingUniform = gl.getUniformLocation(shaderProgramColoredObject, "uUseLighting");
+            shaderProgramColoredObject.ambientColorUniform = gl.getUniformLocation(shaderProgramColoredObject, "uAmbientColor");
+            shaderProgramColoredObject.lightingDirectionUniform = gl.getUniformLocation(shaderProgramColoredObject, "uLightPosition");
+            shaderProgramColoredObject.directionalColorUniform = gl.getUniformLocation(shaderProgramColoredObject, "uDirectionalColor");
+        }
+
+        function initSkySphereShaders(){
+
+            var fragmentShader = getShader("shader-fs-skySphere");
+            var vertexShader = getShader("shader-vs-skySphere");
+
+            skyShader = gl.createProgram();
+            gl.attachShader(skyShader, vertexShader);
+            gl.attachShader(skyShader, fragmentShader);
+            gl.linkProgram(skyShader);
+
+            if (!gl.getProgramParameter(skyShader, gl.LINK_STATUS)) {
+                alert("Could not initialise shaders");
+            }
+            gl.useProgram(skyShader);
+
+            skyShader.vertexPositionAttribute = gl.getAttribLocation(skyShader, "aVertexPosition");
+            gl.enableVertexAttribArray(skyShader.vertexPositionAttribute);
+
+            skyShader.textureCoordAttribute = gl.getAttribLocation(skyShader, "aTextureCoord");
+            gl.enableVertexAttribArray(skyShader.textureCoordAttribute);
+
+//            skyShader.vertexNormalAttribute = gl.getAttribLocation(skyShader, "aVertexNormal");
+//            gl.enableVertexAttribArray(skyShader.vertexNormalAttribute);
+
+//            skyShader.vertexTangentAttribute = gl.getAttribLocation(skyShader, "aVertexTangent");
+//            gl.enableVertexAttribArray(skyShader.vertexTangentAttribute);
+
+            skyShader.pMatrixUniform = gl.getUniformLocation(skyShader, "uPMatrix");
+            skyShader.ViewMatrixUniform = gl.getUniformLocation(skyShader, "uViewMatrix");
+            skyShader.ModelMatrixUniform = gl.getUniformLocation(skyShader, "uModelMatrix");
+            skyShader.nMatrixUniform = gl.getUniformLocation(skyShader, "uNMatrix");
+            skyShader.samplerUniform = gl.getUniformLocation(skyShader, "uSampler");
+            skyShader.ambientColorUniform = gl.getUniformLocation(skyShader, "uAmbientColor");
+        }
+
+        function initTextures(){
+
+            //se cargan las texturas de la callee
+            gl.useProgram(cityShader);
+            loadTexture("textures/calle.jpg", "street");
+
+            var location = gl.getUniformLocation(cityShader, "street");
+            gl.uniform1i(location, 0);//0 ya que es la primer textura
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["street"]);
+
+
+            //se cargan las texturas de los edificios
+            var nombresEdificios = ["building2", "building3", "building4", "building5", "building6", "building7",
+                "building8", "building9", "building11", "building12", "pb1", "pb2", "pb3", "pb4"];
+            var TEXTURES = [gl.TEXTURE1, gl.TEXTURE2, gl.TEXTURE3, gl.TEXTURE4, gl.TEXTURE5, gl.TEXTURE6, gl.TEXTURE7, gl.TEXTURE8, gl.TEXTURE9, gl.TEXTURE10, gl.TEXTURE11, gl.TEXTURE12, gl.TEXTURE13, gl.TEXTURE14, gl.TEXTURE15, gl.TEXTURE16];
+            gl.useProgram(buildingShaders);
+            //loadTexture("textures/ed1_pisos.jpg", nombresEdificios[0]);
+            loadTexture("textures/ed2_pisos.jpg", nombresEdificios[0]);
+            loadTexture("textures/ed17_pisos.jpg", nombresEdificios[1]);
+            loadTexture("textures/ed4_pisos.jpg", nombresEdificios[2]);
+            loadTexture("textures/ed19_pisos.jpg", nombresEdificios[3]);
+            loadTexture("textures/ed7_pisos.jpg", nombresEdificios[4]);
+            loadTexture("textures/ed8_pisos.jpg", nombresEdificios[5]);
+            loadTexture("textures/ed9_pisos.jpg", nombresEdificios[6]);
+            loadTexture("textures/ed16_pisos.jpg", nombresEdificios[7]);
+            loadTexture("textures/ed11_pisos.jpg", nombresEdificios[8]);
+            loadTexture("textures/ed14_pisos.jpg", nombresEdificios[9]);
+            loadTexture("textures/ed1_pb.jpg", nombresEdificios[10]);
+            loadTexture("textures/ed2_pb.jpg", nombresEdificios[11]);
+            loadTexture("textures/ed8_pb.jpg", nombresEdificios[12]);
+            loadTexture("textures/ed4_pb.jpg", nombresEdificios[13]);
+
+            for(i=1; i<15; i++) {
+
+                var location = gl.getUniformLocation(buildingShaders, nombresEdificios[i - 1]);
+                gl.uniform1i(location, i);
+                gl.activeTexture(TEXTURES[i - 1]);
+                gl.bindTexture(gl.TEXTURE_2D, glTextures[nombresEdificios[i - 1]]);
+
+
+            }
+
+            //Concreto Normales
+            gl.useProgram(streetShader);
+            loadTexture("textures/carTop.jpg", "carroceria");
+
+            var location = gl.getUniformLocation(streetShader, "carroceria");
+            gl.uniform1i(location, 16);
+            gl.activeTexture(gl.TEXTURE16);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["carroceria"]);
+
+            //se carga la textura del cielo
+            gl.useProgram(skyShader);
+            loadTexture("textures/refmap.jpg", "sky");
+
+            var location = gl.getUniformLocation(skyShader, "sky");
+            gl.uniform1i(location, 17);
+            gl.activeTexture(gl.TEXTURE17);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["sky"]);
+
+            //Autopista
+            gl.useProgram(streetShader);
+            loadTexture("textures/ruta.jpg", "autopista");
+
+            var location = gl.getUniformLocation(streetShader, "autopista");
+            gl.uniform1i(location, 18);
+            gl.activeTexture(gl.TEXTURE18);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["autopista"]);
+
+            //Concreto
+            gl.useProgram(streetShader);
+            loadTexture("textures/concreto.jpg", "concreto");
+
+            var location = gl.getUniformLocation(streetShader, "concreto");
+            gl.uniform1i(location, 19);
+            gl.activeTexture(gl.TEXTURE19);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["concreto"]);
+
+            //Poste luz
+            gl.useProgram(streetShader);
+            loadTexture("textures/farol.jpg", "poste");
+
+            var location = gl.getUniformLocation(streetShader, "poste");
+            gl.uniform1i(location, 20);
+            gl.activeTexture(gl.TEXTURE20);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["poste"]);
+
+            //Puerta Auto
+            gl.useProgram(streetShader);
+            loadTexture("textures/carSide.jpg", "puerta");
+
+            var location = gl.getUniformLocation(streetShader, "puerta");
+            gl.uniform1i(location, 21);
+            gl.activeTexture(gl.TEXTURE21);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["puerta"]);
+
+
+            //se cargan las texturas de la esquina
+            gl.useProgram(cityShader);
+            loadTexture("textures/cruce.jpg", "esquina");
+
+            var location = gl.getUniformLocation(cityShader, "esquina");
+            gl.uniform1i(location, 22);
+            gl.activeTexture(gl.TEXTURE22);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["esquina"]);
+
+            //se cargan las texturas de la vereda
+            gl.useProgram(cityShader);
+            loadTexture("textures/vereda.jpg", "vereda");
+
+            var location = gl.getUniformLocation(cityShader, "vereda");
+            gl.uniform1i(location, 23);
+            gl.activeTexture(gl.TEXTURE23);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["vereda"]);
+
+            //se carga la textura del pasto
+            gl.useProgram(cityShader);
+            loadTexture("textures/pasto.jpg", "pasto");
+
+            var location = gl.getUniformLocation(cityShader, "pasto");
+            gl.uniform1i(location, 24);
+            gl.activeTexture(gl.TEXTURE24);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["pasto"]);
+
+            //Normales Autopista
+            gl.useProgram(streetShader);
+            loadTexture("textures/ruta_normal.jpg", "autopistaNormalMap");
+
+            var location = gl.getUniformLocation(streetShader, "autopistaNormalMap");
+            gl.uniform1i(location, 25);
+            gl.activeTexture(gl.TEXTURE25);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["autopistaNormalMap"]);
+
+            //Sky reflection
+            gl.useProgram(cityShader);
+            loadTexture("textures/skybox.jpg", "skyy");
+
+            var location = gl.getUniformLocation(cityShader, "skyy");
+            gl.uniform1i(location, 26);
+            gl.activeTexture(gl.TEXTURE26);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["skyy"]);
+
+            //Sky reflection
+            gl.useProgram(cityShader);
+            loadTexture("textures/metal_con_nombres.jpg", "plata");
+
+            var location = gl.getUniformLocation(cityShader, "plata");
+            gl.uniform1i(location, 15);
+            gl.activeTexture(gl.TEXTURE15);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["plata"]);
+//            //Pasto Normal
+//            gl.useProgram(cityShader);
+//            loadTexture("textures/pasto_normal.jpg", "pastoNormalMap");
+//
+//            var location = gl.getUniformLocation(cityShader, "pastoNormalMap");
+//            gl.uniform1i(location, 26);
+//            gl.activeTexture(gl.TEXTURE26);
+//            gl.bindTexture(gl.TEXTURE_2D, glTextures["pastoNormalMap"]);
+
+            //Vereda Normal
+            gl.useProgram(cityShader);
+            loadTexture("textures/vereda_normal.jpg", "veredaNormalMap");
+
+            var location = gl.getUniformLocation(cityShader, "veredaNormalMap");
+            gl.uniform1i(location, 27);
+            gl.activeTexture(gl.TEXTURE27);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["veredaNormalMap"]);
+
+            //Calle Normal
+            gl.useProgram(cityShader);
+            loadTexture("textures/calle_normal.jpg", "streetNormalMap");
+
+            var location = gl.getUniformLocation(cityShader, "streetNormalMap");
+            gl.uniform1i(location, 28);
+            gl.activeTexture(gl.TEXTURE28);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["streetNormalMap"]);
+
+            //Cruce normal
+            gl.useProgram(cityShader);
+            loadTexture("textures/cruce_normal.jpg", "esquinaNormalMap");
+
+            var location = gl.getUniformLocation(cityShader, "esquinaNormalMap");
+            gl.uniform1i(location, 29);
+            gl.activeTexture(gl.TEXTURE29);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["esquinaNormalMap"]);
+
+            //Concreto Normales
+            gl.useProgram(streetShader);
+            loadTexture("textures/concreto_normal.jpg", "concretoNormalMap");
+
+            var location = gl.getUniformLocation(streetShader, "concretoNormalMap");
+            gl.uniform1i(location, 30);
+            gl.activeTexture(gl.TEXTURE30);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["concretoNormalMap"]);
+
+            //rueda
+            gl.useProgram(streetShader);
+            loadTexture("textures/rueda.jpg", "rueda");
+
+            var location = gl.getUniformLocation(streetShader, "rueda");
+            gl.uniform1i(location, 31);
+            gl.activeTexture(gl.TEXTURE31);
+            gl.bindTexture(gl.TEXTURE_2D, glTextures["rueda"]);
+        }
+
+        function loadTexture(path, string) {
+            var texture = gl.createTexture();
+            var image = new Image();
+
+            image.onload = function() {
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+                gl.generateMipmap(gl.TEXTURE_2D);
+            }
+            image.src = path;
+            texture.image = image;
+            //agrega la textura a glTextures
+            glTextures[string] = texture;
+        }
+
+        var CameraMatrix = mat4.create();
+        mat4.identity(CameraMatrix);
+        var pMatrix = mat4.create();
+        var frame=0;
+        var countEdificios = 2.0;
+
+        var body = null;
+        var canvas = null;
+        var camera = null;
+        var factory = null;
+        var autosAnimados = null;
+        var frameAutos = 0;
+        var step = 10;
+
+        var calle1 = null;
+        var calle2 = null;
+        var calle3 = null;
+        var calle4 = null;
+        var calle5 = null;
+        var calle6 = null;
+        var calle7 = null;
+        var calle8 = null;
+        var calle9 = null;
+        var calle10 = null;
+        var calle11= null;
+        var calle12 = null;
+        var calle13 = null;
+        var calle14 = null;
+        var calle15 = null;
+        var calle16 = null;
+        var calle17 = null;
+        var calle18 = null;
+        var calle19 = null;
+        var calle20 = null;
+        var calle21 = null;
+        var calle22 = null;
+        var calle23 = null;
+        var calle24 = null;
+
+        var esquina1=null;
+        var esquina2=null;
+        var esquina3=null;
+        var esquina4=null;
+        var esquina5=null;
+        var esquina6=null;
+        var esquina7=null;
+        var esquina8=null;
+        var esquina9=null;
+
+        var ruta = null;
+
+        //variables de las id de texturas
+        var idStreet;
+        var idBuilding;
+        var idCity;
+
+
+        var mouse = null;
+        var freeCam = null;
+        var orbitCam = null;
+        var freeCamR= null;
+
+        var time = 0.55;
+        var sentido = -1.0;
+        var sol = 0.08;
+
+        var obj = null;
+
+        /*DIBUJAMOS LA ESCENA*/
+
+        function drawScene() {
+
+            requestAnimationFrame(drawScene);
+
+            // Se configura el vierport dentro de �rea �canvas�. en este caso se utiliza toda
+            // el �rea disponible
+            gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+
+            // Se habilita el color de borrado para la pantalla (Color Buffer) y otros buffers
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            // Se configura la matriz de proyecci�n
+            mat4.perspective(pMatrix, 3.14/12.0, gl.viewportWidth / gl.viewportHeight, 0.1, 1000.0);
+
+            ///Dibujamos las figuras
+            escena.setupLighting(vec3.fromValues(-1000, 100, 1000), vec3.fromValues(time + 0.1, time, time), vec3.fromValues(sol, sol, sol));
+            var model_matrix_escene = mat4.create();
+            mat4.identity(model_matrix_escene);
+
+            //ciclo del dia
+            //INICIO CICLO DIA
+            time = time + (sentido * 0.0008);
+            sol = sol + (sentido * 0.0001);
+            if(time > 0.55){
+                sentido = -1.0;
+            }
+            if (time < 0.0){
+                sentido = 1
+            }
+            //FIN CICLO DIA
+
+            if (frame < 3000) {
+                var t = gl.getUniformLocation(buildingShaders, "t");
+                gl.useProgram(buildingShaders);
+                gl.uniform1f(t, frame);
+                factory.updateTechos(frame);
+                frame++;
+            }
+
+            //ACA CAMBIAMOS LA VELOCIDAD DE LOS AUTOS
+            //SI AUMENTO EN FACTORES DE 10 CAMBIA LA VELOCIDAD.
+            escena.draw(model_matrix_escene, false);
+            if(frameAutos > 10 - step) {
+                autosAnimados.updateAutos(step);
+                frameAutos = 0;
+            }
+            frameAutos++;
+
+        }
+
+
+        function webGLStart() {
+
+            /*Funciones Inicializadoras*/
+            canvas = document.getElementById("my_canvas");
+            body = document.getElementById("my_body");
+
+            initGL(canvas);
+            initColoredShaders();
+            initStreetShaders();
+            initBuildingTopShaders();
+            initCityShaders();
+            initSkySphereShaders();
+            initTextures();
+
+            //shadersHandler = new ShaderHandler();
+            //shadersHandler.load();
+
+            /*Inicializacion de variables*/
+            factory = new ObjetosFactory();
+            camera = new CameraHandler();
+            /*NO BORRAR!*/
+            obj = new Objeto3D();
+
+            this.rellenarGrilla();
+
+
+            /*Seteamos los parametros*/
+            body.handler = camera;
+            canvas.handler = camera;
+
+            camera.setOrbit();
+
+
+
+            gl.clearColor(255.0, 255.0, 255.0, 1.0);
+            gl.enable(gl.DEPTH_TEST);
+
+            drawScene();
+        }
+
+        function rellenarGrilla(){
+            var n=4;
+
+
+            var anchoCalle=3.0;
+            var largoCalle=20.0;
+            var manzana = 20.0;
+            escena=factory.createEscene((n-1)*anchoCalle + (n)*manzana, true);
+
+            this.crearRuta(escena);
+            this.rellenarCalles(anchoCalle, largoCalle, manzana, escena, factory);
+            this.rellenarManzanas(anchoCalle, manzana, escena, factory);
+
+            //ajusto la posicion de la escena para mejor visualizacion
+            escena.translate(-22.0, 0.0, -20.0);
+            escena.scale(0.5, 0.5, 0.5);
+        }
+
+        function crearRuta(escena){
+            var puntos_ruta = [];
+            var factorH = 1;
+            var factorW = 1;
+            puntos_ruta.push(vec3.fromValues(0.0, puntosDeControl[0][0] * factorW, puntosDeControl[0][1] * factorH));
+            puntos_ruta.push(vec3.fromValues(0.0, puntosDeControl[1][0] * factorW, puntosDeControl[1][1] * factorH));
+            puntos_ruta.push(vec3.fromValues(0.0, puntosDeControl[2][0] * factorW, puntosDeControl[2][1] * factorH));
+            puntos_ruta.push(vec3.fromValues(0.0, puntosDeControl[3][0] * factorW, puntosDeControl[3][1] * factorH));
+            puntos_ruta.push(vec3.fromValues(0.0, puntosDeControl[4][0] * factorW, puntosDeControl[4][1] * factorH));
+            puntos_ruta.push(vec3.fromValues(0.0, puntosDeControl[5][0] * factorW, puntosDeControl[5][1] * factorH));
+            puntos_ruta.push(vec3.fromValues(0.0, puntosDeControl[6][0] * factorW, puntosDeControl[6][1] * factorH));
+
+            ruta = factory.createRuta(puntos_ruta);
+            escena.add(ruta);
+
+            autosAnimados = new AutosAnimados(ruta, puntos_ruta, factory);
+
+
+        }
+
+        function rellenarCalles(anchoCalle, largoCalle, manzana, escena,factory){
+
+            //Manzanas 1 a 4 estan sobre y=0 y se numeran en x creciente
+            //calle 1: posicion contigua a la manzana 1.
+            calle1 = factory.createCalle(anchoCalle, largoCalle);
+            calle1.translate(manzana,0.1,0);
+            escena.add(calle1);
+
+
+            //calle 2: posicion contigua a la manzana 2.
+            calle2 = factory.createCalle(anchoCalle, largoCalle);
+            calle2.translate(2*manzana+anchoCalle,0.1,0);
+            escena.add(calle2);
+
+            //calle 3: posicion contigua a la manzana 3.
+            calle3 = factory.createCalle(anchoCalle, largoCalle);
+            calle3.translate(3*manzana+ 2*anchoCalle,0.1,0);
+            escena.add(calle3);
+
+            //Manzanas 5 a 8 estan sobre y=manzana y se numeran en x creciente
+            //calle 4: posicion contigua a la manzana 5.
+            calle4 = factory.createCalle(anchoCalle, largoCalle);
+            calle4.translate(manzana,0.1, (manzana+anchoCalle));
+            escena.add(calle4);
+
+            //calle 5: posicion contigua a la manzana 6.
+            calle5 = factory.createCalle(anchoCalle, largoCalle);
+            calle5.translate(2*manzana+anchoCalle,0.1, (manzana+anchoCalle));
+            escena.add(calle5);
+
+            //calle 6: posicion contigua a la manzana 7
+            calle6 = factory.createCalle(anchoCalle, largoCalle);
+            calle6.translate(3*manzana+ 2*anchoCalle,0.1, (manzana+anchoCalle));
+            escena.add(calle6);
+
+            //Manzanas 9 a 12 estan sobre y= 2* manzana
+
+            calle7 = factory.createCalle(anchoCalle, largoCalle);
+            calle7.translate(manzana,0.1, (2*manzana+2*anchoCalle));
+            escena.add(calle7);
+
+            calle8 = factory.createCalle(anchoCalle, largoCalle);
+            calle8.translate(2*manzana+anchoCalle,0.1, (2*manzana+2*anchoCalle));
+            escena.add(calle8);
+
+            calle9 = factory.createCalle(anchoCalle, largoCalle);
+            calle9.translate(3*manzana+ 2*anchoCalle,0.1, (2*manzana+2*anchoCalle));
+            escena.add(calle9);
+
+            //Manzanas 13 a 16 estan en y= 3* manzana
+            calle10 = factory.createCalle(anchoCalle, largoCalle);
+            calle10.translate(manzana,0.1, (3*manzana+3*anchoCalle));
+            escena.add(calle10);
+
+            calle11 = factory.createCalle(anchoCalle, largoCalle);
+            calle11.translate(2*manzana+anchoCalle,0.1, (3*manzana+3*anchoCalle));
+            escena.add(calle11);
+
+            calle12 = factory.createCalle(anchoCalle, largoCalle);
+            calle12.translate(3*manzana+ 2*anchoCalle,0.1, (3*manzana+3*anchoCalle));
+            escena.add(calle12);
+
+            // Comenzamos con las calles horizontales.
+            calle13 = factory.createCalle(anchoCalle, largoCalle);
+            calle13.translate(0,0.1,manzana+anchoCalle);
+            calle13.rotate(Math.PI/2,0,1,0);
+            escena.add(calle13);
+
+            calle14 = factory.createCalle(anchoCalle, largoCalle);
+            calle14.translate(0,0.1,2*manzana+2*anchoCalle);
+            calle14.rotate(Math.PI/2,0,1,0);
+            escena.add(calle14);
+
+            calle15 = factory.createCalle(anchoCalle, largoCalle);
+            calle15.translate(0,0.1,3*manzana+3*anchoCalle);
+            calle15.rotate(Math.PI/2,0,1,0);
+            escena.add(calle15);
+
+            //Cruzamos al otro lado
+            calle16 = factory.createCalle(anchoCalle, largoCalle);
+            calle16.translate(manzana+anchoCalle,0.1,manzana+anchoCalle);
+            calle16.rotate(Math.PI/2,0,1,0);
+            escena.add(calle16);
+
+            calle17 = factory.createCalle(anchoCalle, largoCalle);
+            calle17.translate(manzana+anchoCalle,0.1,2*manzana+2*anchoCalle);
+            calle17.rotate(Math.PI/2,0,1,0);
+            escena.add(calle17);
+
+            calle18 = factory.createCalle(anchoCalle, largoCalle);
+            calle18.translate(manzana+anchoCalle,0.1,3*manzana+3*anchoCalle);
+            calle18.rotate(Math.PI/2,0,1,0);
+            escena.add(calle18);
+
+            //Cruzamos al otro lado
+            calle19 = factory.createCalle(anchoCalle, largoCalle);
+            calle19.translate(2*manzana+ 2*anchoCalle,0.1,manzana+anchoCalle);
+            calle19.rotate(Math.PI/2,0,1,0);
+            escena.add(calle19);
+
+            calle20 = factory.createCalle(anchoCalle, largoCalle);
+            calle20.translate(2*manzana+ 2*anchoCalle,0.1,2*manzana+2*anchoCalle);
+            calle20.rotate(Math.PI/2,0,1,0);
+            escena.add(calle20);
+
+            calle21 = factory.createCalle(anchoCalle, largoCalle);
+            calle21.translate(2*manzana+ 2*anchoCalle,0.1,3*manzana+3*anchoCalle);
+            calle21.rotate(Math.PI/2,0,1,0);
+            escena.add(calle21);
+
+            //Cruzamos al otro lado
+            calle22 = factory.createCalle(anchoCalle, largoCalle);
+            calle22.translate(3*manzana+ 3*anchoCalle,0.1,manzana+anchoCalle);
+            calle22.rotate(Math.PI/2,0,1,0);
+            escena.add(calle22);
+
+            calle23 = factory.createCalle(anchoCalle, largoCalle);
+            calle23.translate(3*manzana+ 3*anchoCalle,0.1,2*manzana+2*anchoCalle);
+            calle23.rotate(Math.PI/2,0,1,0);
+            escena.add(calle23);
+
+            calle24 = factory.createCalle(anchoCalle, largoCalle);
+            calle24.translate(3*manzana+ 3*anchoCalle,0.1,3*manzana+3*anchoCalle);
+            calle24.rotate(Math.PI/2,0,1,0);
+            escena.add(calle24);
+
+            //CREAMOS LAS ESQUINAS.
+            esquina1= factory.createEsquina(anchoCalle);
+            esquina1.translate(manzana,0.1,manzana);
+            escena.add(esquina1);
+
+            esquina2= factory.createEsquina(anchoCalle);
+            esquina2.translate(manzana,0.1,2*manzana+anchoCalle);
+            escena.add(esquina2);
+
+            esquina3= factory.createEsquina(anchoCalle);
+            esquina3.translate(manzana,0.1,3*manzana+ 2*anchoCalle);
+            escena.add(esquina3);
+
+            esquina4= factory.createEsquina(anchoCalle);
+            esquina4.translate(2*manzana + anchoCalle,0.1,manzana);
+            escena.add(esquina4);
+
+            esquina5= factory.createEsquina(anchoCalle);
+            esquina5.translate(2*manzana + anchoCalle,0.1,2*manzana+anchoCalle);
+            escena.add(esquina5);
+
+            esquina6= factory.createEsquina(anchoCalle);
+            esquina6.translate(2*manzana + anchoCalle,0.1,3*manzana+ 2*anchoCalle);
+            escena.add(esquina6);
+
+            esquina7= factory.createEsquina(anchoCalle);
+            esquina7.translate(3*manzana + 2*anchoCalle,0.1,manzana);
+            escena.add(esquina7);
+
+            esquina8= factory.createEsquina(anchoCalle);
+            esquina8.translate(3*manzana + 2*anchoCalle,0.1,2*manzana+anchoCalle);
+            escena.add(esquina8);
+
+            esquina9= factory.createEsquina(anchoCalle);
+            esquina9.translate(3*manzana + 2*anchoCalle,0.1,3*manzana+ 2*anchoCalle);
+            escena.add(esquina9);
+        }
+
+        function rellenarManzanas(anchoCalle, manzana, escena,factory){
+            var vertical = 0;
+            var horizontal = 0;
+            for (var i=0; i< 16; i++){
+
+                /*if(){
+                 ACA VA EL IF DE SI ES RUTA O CALLE!!!
+                 }*/
+                if(grilla[i]){
+                    var mEdf = factory.createManzanaB(manzana);
+                    mEdf.translate( (horizontal* (anchoCalle+manzana) ), 0.0, (vertical* (anchoCalle+manzana) ) );
+                    escena.add(mEdf);
+                }
+                else{
+                    var mPast = factory.createManzanaP(manzana);
+                    mPast.translate( (horizontal* (anchoCalle+manzana) ), 0.0, (vertical* (anchoCalle+manzana) ) );
+                    escena.add(mPast);
+                }
+                horizontal++;
+                if(horizontal ==4){
+                    horizontal=0;
+                    vertical++;
+                }
+                // console.log(horizontal);
+                // console.log(vertical);
+
+            }
+        }
+
+    </script>
+
+</head>
+
+<style>
+
+    body{
+        font-family: "Lato", sans-serif;
+        background-image: url("whirlpool.png");
+    }
+
+    .button {
+        box-shadow: 0 4px 6px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+        position: relative;
+        top: -180px;
+        left:460px;
+        display: inline-block;
+        border-radius: 4px;
+        background-color: #63a1aa;
+        border: none;
+        color: #FFFFFF;
+        text-align: center;
+        font-size: 28px;
+        padding: 20px;
+        width: 200px;
+        transition: all 0.5s;
+        cursor: pointer;
+        margin: 5px;
+    }
+
+    .button span {
+        cursor: pointer;
+        display: inline-block;
+        position: relative;
+        transition: 0.5s;
+    }
+
+    .button span:after {
+        content: '\00bb';
+        position: absolute;
+        opacity: 0;
+        top: 0;
+        right: -20px;
+        transition: 0.5s;
+    }
+
+    .button:hover span {
+        padding-right: 25px;
+    }
+
+    .button:hover span:after {
+        opacity: 1;
+        right: 0;
+    }
+
+    #franjaSup{
+        background-color: white;
+        position: absolute;
+        top:0;
+        left:0;
+        box-shadow: 0 4px 6px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+        z-index:-1;
+    }
+
+    #myCanvas{
+        cursor:crosshair;
+        position:relative;
+        top:-185px;
+        left:10px;
+        background-color: white;
+        box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+        z-index:2;
+
+
+    }
+
+    #my_canvas{
+        position:relative;
+        left:-10px;
+        box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+        z-index:2;
+
+    }
+
+    h1{
+        position:relative;
+        top:-10px;
+        z-index:1;
+    }
+
+    h2{
+        position:relative;
+        top:-25px;
+        z-index:1;
+    }
+
+    #slider{
+        position:relative;
+        left:480px;
+        top: -135px;
+        z-index:1;
+
+    }
+    h3{
+        position:relative;
+        left:-80px;
+        top: -65px;
+    }
+
+    .alert {
+        padding: 20px;
+        background-color: #63a1aa;
+        color: floralwhite;
+        font-weight: bold;
+        font-family: "Lato", sans-serif;
+        margin-bottom: 15px;
+    }
+
+    .closebtn {
+        margin-left: 15px;
+        color: white;
+        font-weight: bold;
+        float: right;
+        font-size: 22px;
+        line-height: 20px;
+        cursor: pointer;
+        transition: 0.3s;
+    }
+
+    .closebtn:hover {
+        color: black;
+    }
+    .controles{
+        padding: 2px;
+        margin-bottom: 1px;
+        margin-top: 1px;
+        margin-left: 30px;
+    }
+    .izquierda{
+        float:left;
+        width: 300px;
+        margin-left:30px;
+    }
+    .derecha{
+        float:left;
+        width: 500px;
+    }
+
+
+</style>
+
+<script src="jquery-2.1.4.min.js"></script>
+
+<body id = "my_body" onload="Load();" body style="background-color:#E0E0E0;">
+
+<center>
+    <h1 style="color:dimgray">SG - 66.71 - Trabajo Pr&aacute;ctico 2017</h1>
+    <h2 style="color:grey">Schapira y Guerrero</h2>
+    <div class="alert" style="height: 80px">
+        <span class="closebtn" onclick="this.parentElement.style.display='none';">&times;</span>
+
+        <div>
+            <div class = "izquierda">
+                <p class="controles" >Boton 1: Camara Libre Calle.</p>
+                <p class="controles" style="margin-left: 7px;">Boton 2: Camara Orbital.</p>
+                <p class="controles" >Boton 3: Camara Libre Ruta.</p>
+            </div>
+
+            <div class = "derecha">
+                <p class="controles" >Movimientos: W A S D --- Elevaciones: Q E</p>
+                <p class="controles" style="margin-left: 7px;">Zoom: + - </p>
+                <p class="controles" >Movimientos: W A S D --- Elevaciones: Q E</p>
+            </div>
+        </div>
+
+    </div>
+
+    <canvas id="franjaSup" width="1600" height="90">
+    </canvas>
+    <canvas id="my_canvas" width="900" height="500">
+    </canvas>
+    <canvas id="myCanvas" width="300" height="300">
+        Your browser does not support the HTML5 canvas element.
+    </canvas>
+
+    <div id="slider" class="ui-content">
+        <input type="range" name="points" id="points" value="10" min="0" max="10">
+        <h3 style="color:#803a37">Car Speed:</h3>
+        </form>
+    </div>
+
+
+</center>
+
+<center>
+    <button class="button" onclick="Load();"><span>Load </span></button>
+</center>
+
+
+
+<script>
+    var Base0,Base1,Base2;
+    var Base0der,Base1der,Base2der;
+
+
+    function setBase(){
+
+        Base0=function(u) { return (u*u/2 - u + 1/2);}
+
+        Base1=function(u) { return (- u*u + u + 1/2); }
+
+        Base2=function(u) { return (u*u/2); }
+
+        Base0der=function(u) { return (u - 1); }
+
+        Base1der=function(u) { return (-2*u + 1); }
+
+        Base2der=function(u) { return (u);}
+
+    }
+
+    var CurvaCuadratica=function (u,puntosDeControl){
+
+        var p0=puntosDeControl[0];
+        var p1=puntosDeControl[1];
+        var p2=puntosDeControl[2];
+
+        var punto=new Object();
+
+        punto.x=Base0(u)*p0[0]+Base1(u)*p1[0]+Base2(u)*p2[0];
+        punto.y=Base0(u)*p0[1]+Base1(u)*p1[1]+Base2(u)*p2[1];
+
+        return punto;
+    }
+
+    var CurvaCuadraticaDerivadaPrimera=function (u,puntosDeControl){
+
+        var p0=puntosDeControl[0];
+        var p1=puntosDeControl[1];
+        var p2=puntosDeControl[2];
+
+        var punto=new Object();
+
+        punto.x=Base0der(u)*p0[0]+Base1der(u)*p1[0]+Base2der(u)*p2[0];
+        punto.y=Base0der(u)*p0[1]+Base1der(u)*p1[1]+Base2der(u)*p2[1];
+
+        return punto;
+    }
+
+    function dibujarCurvaCuadratica(puntosDeControl,dibujarGrafo){
+
+        // devuelve un punto de la curva segun el parametro u entre 0 y 1
+
+        // 3 Puntos de control P0, P1 y P2
+
+
+        var p0=puntosDeControl[0];
+        var p1=puntosDeControl[1];
+        var p2=puntosDeControl[2];
+        var p3=puntosDeControl[3];
+        var p4=puntosDeControl[4];
+        var p5=puntosDeControl[5];
+
+
+        ctx.lineWidth=15;
+        // Dibujamos la curva en color azul, entre u=0 y u=1 con deltaU
+
+        var deltaU=0.01; // es el paso de avance sobre la curva cuanto mas chico mayor es el detalle
+        // u=0.05 son 20 segmentos (0.05=1/20)
+        ctx.clearRect ( 0 , 0 ,1000 , 1000 );
+        ctx.beginPath();
+
+        for (var count=0; count<puntosDeControl.length ; count=count+deltaU){
+            // Tengo que calcular la posicion del punto c(u)
+
+            var currentU = count * (puntosDeControl.length-2) / (puntosDeControl.length - 1);
+
+            var control_points = [];
+            var aux = Math.floor(currentU);
+            var t = currentU - aux;
+            //si es el ultimo punto
+            if (currentU >= puntosDeControl.length -2){
+                aux = puntosDeControl.length - 3;
+                t = 1;
+            }
+            control_points[0] = puntosDeControl[aux];
+            control_points[1] = puntosDeControl[aux + 1];
+            control_points[2] = puntosDeControl[aux + 2];
+
+            var punto=CurvaCuadratica(t,control_points);
+
+            marcarGrilla(punto);
+
+            if (t==0) ctx.moveTo(punto.x,punto.y);
+            ctx.lineTo(punto.x,punto.y);// hago una linea desde el ultimo lineTo hasta x,y
+
+            //console.log("C("+u+")= "+punto.x+","+punto.y);
+        }
+        ctx.strokeStyle="#61858b";
+        ctx.stroke();
+
+
+
+        // Dibujo el grafo de control en color rojo, solo para verificar donde esta cada punto de control
+
+        if (dibujarGrafo){
+            ctx.beginPath();
+
+            //dibujo cada punto de control
+            ctx.strokeStyle="#ce8200";
+            ctx.beginPath();
+            ctx.arc(p0[0],p0[1],7,0,2*Math.PI);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(p1[0],p1[1],7,0,2*Math.PI);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(p2[0],p2[1],7,0,2*Math.PI);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(p3[0],p3[1],7,0,2*Math.PI);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(p4[0],p4[1],7,0,2*Math.PI);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(p5[0],p5[1],7,0,2*Math.PI);
+            ctx.stroke();
+        }
+
+
+    }
+
+    function dibujarVector(x1,y1,x2,y2,color){
+
+        ctx.beginPath();
+        ctx.moveTo(x1,y1);
+        ctx.lineTo(x1+x2,y1+y2);
+        ctx.strokeStyle=color;
+        ctx.stroke();
+    }
+
+    function marcarGrilla(u){
+
+        var ajusteRadio = 10.0;
+
+        var posY = ((u.y) / 76.0);
+        var topY = Math.floor(posY + (ajusteRadio / 76.0));
+        var lowY = Math.floor(posY - (ajusteRadio / 76.0));
+        if (topY > 3.0){ topY = 3.0;}
+
+        var posX = ((u.x) / 76.0);
+        var topX = Math.floor(posX + (ajusteRadio / 76.0));
+        var lowX = Math.floor(posX - (ajusteRadio / 76.0));
+        if (topX > 3.0){ topX = 3.0;}
+
+        var cuadradoTop = topX + (4 * topY);
+        var cuadradoLow = lowX + (4 * lowY);
+
+        grilla[cuadradoTop] = false;
+        grilla[cuadradoLow] = false;
+
+    }
+
+    function resetGrilla(grilla){
+        //se cuentan los cuadredaos de izq a der y de arriba a abajo
+        // 0  1  2  3
+        // 4  5  6  7
+        // 8  9  10 11
+        // 12 13 14 15
+        for (var k = 0; k < 16; k++) {
+            if(grilla.length < 16){ grilla.push(true); }
+            else{ grilla[k] = true; }
+        }
+    }
+
+
+    function animate() {
+
+        //dibujarGrilla();
+
+        requestAnimationFrame( animate );
+
+        dibujarCurvaCuadratica(puntosDeControl,true);
+
+    }
+
+    var puntosDeControl=[ [0, 75], [0,75], [100,100] , [150,130] , [200,200],  [300,225], [300,225] ];
+    var new_points = [ [0, 75], [0,75], [100,100] , [150,130] , [200,200],  [300,225], [300,225] ];
+
+    var grilla = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+
+    var new_step = 0.5;
+
+    var c=document.getElementById("myCanvas");
+    var ctx=c.getContext("2d");
+
+
+
+
+    $( document ).ready(function() {// esto es para esperar que carge la libreria Jquery
+
+
+        function updateCoordinates(e){
+            var pos=$("#myCanvas").position();
+            if(p1){
+                new_points[0][1] = (e.pageY-pos.top);
+                new_points[1][1] = (e.pageY-pos.top);
+            }
+            if(p2){
+                new_points[2][0] = (e.pageX -pos.left);
+                new_points[2][1] = (e.pageY-pos.top);
+            }
+            if(p3){
+                new_points[3][0] = (e.pageX -pos.left);
+                new_points[3][1] = (e.pageY-pos.top);
+            }
+            if(p4){
+                new_points[4][0] = (e.pageX -pos.left);
+                new_points[4][1] = (e.pageY-pos.top);
+            }
+            if(p5){
+                new_points[5][1] = (e.pageY-pos.top);
+                new_points[6][1] = (e.pageY-pos.top);
+            }
+        }
+
+        var mouseIsPressed=false;
+        var p1 = false;
+        var p5 = false;
+        var p2 = false;
+        var p3 = false;
+        var p4 = false;
+        var radio = 12;
+
+        $("#myCanvas").bind('mousemove',function(e){
+            var pos=$("#myCanvas").position();
+            if (mouseIsPressed){
+                if(p4){
+                    punto = puntosDeControl[4];
+                    punto[0] = (e.pageX -pos.left);
+                    punto[1] = (e.pageY-pos.top);
+                }
+                else if(p2){
+                    punto = puntosDeControl[2];
+                    punto[0] = (e.pageX -pos.left);
+                    punto[1] = (e.pageY-pos.top);
+                }
+                else if(p3){
+                    punto = puntosDeControl[3];
+                    punto[0] = (e.pageX -pos.left);
+                    punto[1] = (e.pageY-pos.top);
+                }
+                updateCoordinates(e);
+            }
+        });
+
+
+        $("#myCanvas").bind('mousedown',function(e){
+            mouseIsPressed=true;
+            var pos=$("#myCanvas").position();
+
+            if( (puntosDeControl[4][0] <= (e.pageX -pos.left)) + radio &&
+                (puntosDeControl[4][0] >= (e.pageX -pos.left)) - radio &&
+                (puntosDeControl[4][1] <= (e.pageY-pos.top) + radio) &&
+                (puntosDeControl[4][1] >= (e.pageY-pos.top) - radio) ){
+                p4 = true;
+            }
+            else if( (puntosDeControl[2][0] <= (e.pageX -pos.left)) + radio &&
+                (puntosDeControl[2][0] >= (e.pageX -pos.left)) - radio &&
+                (puntosDeControl[2][1] <= (e.pageY-pos.top) + radio) &&
+                (puntosDeControl[2][1] >= (e.pageY-pos.top) - radio) ){
+                p2 = true;
+            }
+            else if( (puntosDeControl[3][0] <= (e.pageX -pos.left)) + radio &&
+                (puntosDeControl[3][0] >= (e.pageX -pos.left)) - radio &&
+                (puntosDeControl[3][1] <= (e.pageY-pos.top) + radio) &&
+                (puntosDeControl[3][1] >= (e.pageY-pos.top) - radio) ){
+                p3 = true;
+            }
+            else if( (puntosDeControl[1][0] <= (e.pageX -pos.left)) + radio &&
+                (puntosDeControl[1][0] >= (e.pageX -pos.left)) - radio &&
+                (puntosDeControl[1][1] <= (e.pageY-pos.top) + radio) &&
+                (puntosDeControl[1][1] >= (e.pageY-pos.top) - radio) ){
+                p1 = true;
+            }
+            else if( (puntosDeControl[5][0] <= (e.pageX -pos.left)) + radio &&
+                (puntosDeControl[5][0] >= (e.pageX -pos.left)) - radio &&
+                (puntosDeControl[5][1] <= (e.pageY-pos.top) + radio) &&
+                (puntosDeControl[5][1] >= (e.pageY-pos.top) - radio) ){
+                p5 = true;
+            }
+
+
+            updateCoordinates(e);
+        });
+
+        $("#myCanvas").bind('mouseup',function(e){
+            mouseIsPressed=false;
+            p4 = false;
+            p2 = false;
+            p3 = false;
+            p1 = false;
+            p5 = false;
+        });
+
+    });
+
+
+
+    setBase();
+    //setBases("bspline2");
+    animate();
+    //dibujarCurva(puntosDeControl,true);
+
+    function Load(){
+        step = document.getElementById("points").value;
+        frame = 0;
+        countEdificios = 2.0;
+        puntosDeControl [0] = new_points[0];
+        puntosDeControl [1] = new_points[1];
+        puntosDeControl [2] = new_points[2];
+        puntosDeControl [3] = new_points[3];
+        puntosDeControl [4] = new_points[4];
+        puntosDeControl [5] = new_points[5];
+        puntosDeControl [6] = new_points[6];
+        resetGrilla(grilla);
+        animate();
+        webGLStart();
+    }
+
+</script>
+
+</body>
+
+</html>
