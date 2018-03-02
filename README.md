@@ -14,4 +14,4 @@ Mecanismos de iluminación implementados:
 * Mapas de Color difuso
 * Mapas de Normales
 
-### Link al trabajo: https://marcossch.github.io/
+### Link al trabajo: https://marcossch.github.io/Road-Generator/
