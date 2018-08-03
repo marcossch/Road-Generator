@@ -1,6 +1,6 @@
 # Road Generator
 ## Languages and Technologies: 
-WebGL, Html, JavaScript, Shaders.
+WebGL, Html, JavaScript, Shaders Manipulation.
 
 ---
 Implementation of a 3d scene that shows an urban grid with streets, parks, buildings, and a highway going through them. The project involved the development of its own sweep surfaces, surfaces of revolution, curves and objects hierarchies. Also, animation mechanisms and cameras where particularly made to view the scene from different points of view.
